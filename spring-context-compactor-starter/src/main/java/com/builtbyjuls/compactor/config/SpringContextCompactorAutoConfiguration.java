@@ -1,5 +1,6 @@
 package com.builtbyjuls.compactor.config;
 
+import com.builtbyjuls.compactor.advisor.SpringContextCompactorAdvisor;
 import com.builtbyjuls.compactor.compactor.SpringAstCompactor;
 import com.builtbyjuls.compactor.compactor.SpringProxyTrapScanner;
 import com.builtbyjuls.compactor.compactor.StereotypeClassifier;
@@ -52,5 +53,14 @@ public class SpringContextCompactorAutoConfiguration {
     @ConditionalOnMissingBean
     public CompactionBudgetService compactionBudgetService(SpringAstCompactor springAstCompactor) {
         return new CompactionBudgetService(springAstCompactor);
+    }
+
+    @Bean
+    @ConditionalOnMissingBean
+    public SpringContextCompactorAdvisor springContextCompactorAdvisor(
+            SpringAstCompactor springAstCompactor,
+            CompactorProperties compactorProperties
+    ) {
+        return new SpringContextCompactorAdvisor(springAstCompactor, compactorProperties);
     }
 }

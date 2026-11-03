@@ -1,5 +1,6 @@
 package com.builtbyjuls.compactor.config;
 
+import com.builtbyjuls.compactor.advisor.SpringContextCompactorAdvisor;
 import com.builtbyjuls.compactor.compactor.SpringAstCompactor;
 import com.builtbyjuls.compactor.compactor.SpringProxyTrapScanner;
 import com.builtbyjuls.compactor.compactor.StereotypeClassifier;
@@ -26,6 +27,7 @@ class SpringContextCompactorAutoConfigurationTest {
             assertThat(context).hasSingleBean(SpringAstCompactor.class);
             assertThat(context).hasSingleBean(SpringSliceExpander.class);
             assertThat(context).hasSingleBean(CompactionBudgetService.class);
+            assertThat(context).hasSingleBean(SpringContextCompactorAdvisor.class);
             assertThat(context).hasSingleBean(CompactorProperties.class);
         });
     }
@@ -40,6 +42,7 @@ class SpringContextCompactorAutoConfigurationTest {
                     assertThat(context).doesNotHaveBean(SpringAstCompactor.class);
                     assertThat(context).doesNotHaveBean(SpringSliceExpander.class);
                     assertThat(context).doesNotHaveBean(CompactionBudgetService.class);
+                    assertThat(context).doesNotHaveBean(SpringContextCompactorAdvisor.class);
                 });
     }
 }
