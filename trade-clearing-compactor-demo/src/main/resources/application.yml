@@ -1,0 +1,10 @@
+spring:
+  application:
+    name: trade-clearing-compactor-demo
+  threads:
+    virtual:
+      enabled: true
+  jpa:
+    open-in-view: false
+    hibernate:
+      ddl-auto: validate
