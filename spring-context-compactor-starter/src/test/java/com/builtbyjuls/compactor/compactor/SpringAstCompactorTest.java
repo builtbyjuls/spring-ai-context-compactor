@@ -527,4 +527,65 @@ class SpringAstCompactorTest {
         assertThat(result.stereotype()).isEqualTo(SpringStereotype.SERVICE);
         assertThat(result.compactedSkeleton()).contains("// [SPRING COMPACTOR] File: com/builtbyjuls/demo/DemoService.java");
     }
+
+    @Test
+    @DisplayName("compactFile normalizes mixed relative and absolute paths without throwing")
+    void compactFileNormalizesMixedPaths(@TempDir Path tempDir) throws IOException {
+        Path sourceRoot = tempDir.resolve("src/main/java");
+        Path packageDir = sourceRoot.resolve("com/builtbyjuls/demo");
+        Files.createDirectories(packageDir);
+
+        Path javaFile = packageDir.resolve("DemoService.java");
+        String code = """
+                package com.builtbyjuls.demo;
+
+                import org.springframework.stereotype.Service;
+
+                @Service
+                public class DemoService {
+                    public void run() {
+                        System.out.println("Demo");
+                    }
+                }
+                """;
+        Files.writeString(javaFile, code);
+
+        // Call with absolute javaFile and absolute sourceRoot
+        CompactedFileResultDto result = compactor.compactFile(sourceRoot.toAbsolutePath(), javaFile);
+        assertThat(result.filePath()).isEqualTo("com/builtbyjuls/demo/DemoService.java");
+    }
+
+    @Test
+    @DisplayName("honors includeLineNumbers=false by omitting line range prefix")
+    void honorsIncludeLineNumbersDisabled() {
+        CompactorProperties customProps = new CompactorProperties();
+        customProps.setIncludeLineNumbers(false);
+        SpringAstCompactor noLineCompactor = new SpringAstCompactor(
+                new StereotypeClassifier(),
+                new SpringProxyTrapScanner(),
+                customProps
+        );
+
+        String code = """
+                package com.builtbyjuls.demo;
+
+                import org.springframework.stereotype.Service;
+
+                @Service
+                public class DemoService {
+                    public DemoService() {
+                        System.out.println("Init");
+                    }
+
+                    public void run() {
+                        System.out.println("Demo");
+                    }
+                }
+                """;
+
+        CompactedFileResultDto result = noLineCompactor.compactSource("DemoService.java", code);
+        String skeleton = result.compactedSkeleton();
+        assertThat(skeleton).contains("/* body omitted (");
+        assertThat(skeleton).doesNotContain("/* L");
+    }
 }

@@ -74,7 +74,9 @@ public class SpringAstCompactor {
 
         try {
             String javaSource = Files.readString(filePath, StandardCharsets.UTF_8);
-            String relPath = sourceRoot.relativize(filePath).toString().replace('\\', '/');
+            Path normalizedRoot = sourceRoot.toAbsolutePath().normalize();
+            Path normalizedFile = filePath.toAbsolutePath().normalize();
+            String relPath = normalizedRoot.relativize(normalizedFile).toString().replace('\\', '/');
             return compactSource(relPath, javaSource);
         } catch (IOException e) {
             throw new UncheckedIOException("Failed to read file: " + filePath, e);
@@ -403,13 +405,17 @@ public class SpringAstCompactor {
         int endLine = constructor.getEnd().map(p -> p.line).orElse(0);
         int omittedLines = Math.max(1, endLine - startLine + 1);
 
-        sb.append(" /* L").append(startLine).append("-L").append(endLine)
-                .append(": body omitted (").append(omittedLines).append(" lines) */ ;\n");
+        if (properties.isIncludeLineNumbers()) {
+            sb.append(" /* L").append(startLine).append("-L").append(endLine)
+                    .append(": body omitted (").append(omittedLines).append(" lines) */ ;\n");
+        } else {
+            sb.append(" /* body omitted (").append(omittedLines).append(" lines) */ ;\n");
+        }
 
         return sb.toString();
     }
 
-    private String buildMethodSignature(MethodDeclaration method) {
+    public static String buildMethodSignature(MethodDeclaration method) {
         StringBuilder sb = new StringBuilder();
         String modifiers = method.getModifiers().stream()
                 .map(m -> m.getKeyword().asString())
@@ -473,8 +479,12 @@ public class SpringAstCompactor {
                 }
             }
 
-            sb.append(" /* L").append(startLine).append("-L").append(endLine)
-                    .append(": body omitted (").append(omittedLines).append(" lines)");
+            if (properties.isIncludeLineNumbers()) {
+                sb.append(" /* L").append(startLine).append("-L").append(endLine)
+                        .append(": body omitted (").append(omittedLines).append(" lines)");
+            } else {
+                sb.append(" /* body omitted (").append(omittedLines).append(" lines)");
+            }
 
             if (!methodTraps.isEmpty()) {
                 for (MethodTrapNoteDto trap : methodTraps) {
@@ -488,11 +498,27 @@ public class SpringAstCompactor {
         return sb.toString();
     }
 
-    private List<MethodTrapNoteDto> findTrapsForMethod(MethodDeclaration method, List<MethodTrapNoteDto> allTraps) {
+    public static List<MethodTrapNoteDto> findTrapsForMethod(MethodDeclaration method, List<MethodTrapNoteDto> allTraps) {
         String methodName = method.getNameAsString();
+        int startLine = method.getBegin().map(p -> p.line).orElse(0);
+        int endLine = method.getEnd().map(p -> p.line).orElse(0);
+
         return allTraps.stream()
-                .filter(t -> t.callerMethod().equals(methodName) ||
-                        (t.targetMethod().equals(methodName) && t.trapType() == ProxyTrapType.NON_PUBLIC_TRANSACTIONAL))
+                .filter(t -> {
+                    if (t.callerMethod().equals(methodName)) {
+                        if (startLine > 0 && endLine >= startLine && t.callSiteLine() > 0) {
+                            return t.callSiteLine() >= startLine && t.callSiteLine() <= endLine;
+                        }
+                        return true;
+                    }
+                    if (t.targetMethod().equals(methodName) && t.trapType() == ProxyTrapType.NON_PUBLIC_TRANSACTIONAL) {
+                        if (startLine > 0 && endLine >= startLine && t.callSiteLine() > 0) {
+                            return t.callSiteLine() >= startLine && t.callSiteLine() <= endLine;
+                        }
+                        return true;
+                    }
+                    return false;
+                })
                 .distinct()
                 .toList();
     }

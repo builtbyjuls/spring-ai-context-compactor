@@ -3,6 +3,8 @@ package com.builtbyjuls.compactor.config;
 import com.builtbyjuls.compactor.compactor.SpringAstCompactor;
 import com.builtbyjuls.compactor.compactor.SpringProxyTrapScanner;
 import com.builtbyjuls.compactor.compactor.StereotypeClassifier;
+import com.builtbyjuls.compactor.service.CompactionBudgetService;
+import com.builtbyjuls.compactor.service.SpringSliceExpander;
 import org.springframework.boot.autoconfigure.AutoConfiguration;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
@@ -34,5 +36,21 @@ public class SpringContextCompactorAutoConfiguration {
             CompactorProperties compactorProperties
     ) {
         return new SpringAstCompactor(stereotypeClassifier, springProxyTrapScanner, compactorProperties);
+    }
+
+    @Bean
+    @ConditionalOnMissingBean
+    public SpringSliceExpander springSliceExpander(
+            SpringAstCompactor springAstCompactor,
+            SpringProxyTrapScanner springProxyTrapScanner,
+            CompactorProperties compactorProperties
+    ) {
+        return new SpringSliceExpander(springAstCompactor, springProxyTrapScanner, compactorProperties);
+    }
+
+    @Bean
+    @ConditionalOnMissingBean
+    public CompactionBudgetService compactionBudgetService(SpringAstCompactor springAstCompactor) {
+        return new CompactionBudgetService(springAstCompactor);
     }
 }
