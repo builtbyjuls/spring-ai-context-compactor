@@ -4,8 +4,13 @@ import com.builtbyjuls.compactor.advisor.SpringContextCompactorAdvisor;
 import com.builtbyjuls.compactor.compactor.SpringAstCompactor;
 import com.builtbyjuls.compactor.compactor.SpringProxyTrapScanner;
 import com.builtbyjuls.compactor.compactor.StereotypeClassifier;
+import com.builtbyjuls.compactor.mcp.CompactorMcpHttpController;
+import com.builtbyjuls.compactor.mcp.McpCompactorDispatcher;
+import com.builtbyjuls.compactor.mcp.McpStdioServer;
 import com.builtbyjuls.compactor.service.CompactionBudgetService;
 import com.builtbyjuls.compactor.service.SpringSliceExpander;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
 import org.springframework.boot.autoconfigure.AutoConfiguration;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
@@ -62,5 +67,48 @@ public class SpringContextCompactorAutoConfiguration {
             CompactorProperties compactorProperties
     ) {
         return new SpringContextCompactorAdvisor(springAstCompactor, compactorProperties);
+    }
+
+    @Bean
+    @ConditionalOnMissingBean
+    public ObjectMapper compactorObjectMapper() {
+        return new ObjectMapper().registerModule(new JavaTimeModule());
+    }
+
+    @Bean
+    @ConditionalOnMissingBean
+    public McpCompactorDispatcher mcpCompactorDispatcher(
+            SpringAstCompactor springAstCompactor,
+            SpringSliceExpander springSliceExpander,
+            CompactionBudgetService compactionBudgetService,
+            CompactorProperties compactorProperties,
+            ObjectMapper compactorObjectMapper
+    ) {
+        return new McpCompactorDispatcher(
+                springAstCompactor,
+                springSliceExpander,
+                compactionBudgetService,
+                compactorProperties,
+                compactorObjectMapper
+        );
+    }
+
+    @Bean
+    @ConditionalOnMissingBean
+    public McpStdioServer mcpStdioServer(
+            McpCompactorDispatcher mcpCompactorDispatcher,
+            ObjectMapper compactorObjectMapper
+    ) {
+        return new McpStdioServer(mcpCompactorDispatcher, compactorObjectMapper);
+    }
+
+    @Bean
+    @ConditionalOnMissingBean
+    @ConditionalOnProperty(prefix = "spring.compactor", name = "mcp-endpoint-enabled", havingValue = "true", matchIfMissing = true)
+    public CompactorMcpHttpController compactorMcpHttpController(
+            CompactionBudgetService compactionBudgetService,
+            McpCompactorDispatcher mcpCompactorDispatcher
+    ) {
+        return new CompactorMcpHttpController(compactionBudgetService, mcpCompactorDispatcher);
     }
 }

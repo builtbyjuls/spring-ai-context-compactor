@@ -4,6 +4,9 @@ import com.builtbyjuls.compactor.advisor.SpringContextCompactorAdvisor;
 import com.builtbyjuls.compactor.compactor.SpringAstCompactor;
 import com.builtbyjuls.compactor.compactor.SpringProxyTrapScanner;
 import com.builtbyjuls.compactor.compactor.StereotypeClassifier;
+import com.builtbyjuls.compactor.mcp.CompactorMcpHttpController;
+import com.builtbyjuls.compactor.mcp.McpCompactorDispatcher;
+import com.builtbyjuls.compactor.mcp.McpStdioServer;
 import com.builtbyjuls.compactor.service.CompactionBudgetService;
 import com.builtbyjuls.compactor.service.SpringSliceExpander;
 import org.junit.jupiter.api.DisplayName;
@@ -29,7 +32,21 @@ class SpringContextCompactorAutoConfigurationTest {
             assertThat(context).hasSingleBean(CompactionBudgetService.class);
             assertThat(context).hasSingleBean(SpringContextCompactorAdvisor.class);
             assertThat(context).hasSingleBean(CompactorProperties.class);
+            assertThat(context).hasSingleBean(McpCompactorDispatcher.class);
+            assertThat(context).hasSingleBean(McpStdioServer.class);
+            assertThat(context).hasSingleBean(CompactorMcpHttpController.class);
         });
+    }
+
+    @Test
+    @DisplayName("Disables MCP HTTP controller when mcp-endpoint-enabled is false")
+    void disablesMcpControllerWhenConfigured() {
+        contextRunner.withPropertyValues("spring.compactor.mcp-endpoint-enabled=false")
+                .run(context -> {
+                    assertThat(context).hasSingleBean(McpCompactorDispatcher.class);
+                    assertThat(context).hasSingleBean(McpStdioServer.class);
+                    assertThat(context).doesNotHaveBean(CompactorMcpHttpController.class);
+                });
     }
 
     @Test
@@ -43,6 +60,9 @@ class SpringContextCompactorAutoConfigurationTest {
                     assertThat(context).doesNotHaveBean(SpringSliceExpander.class);
                     assertThat(context).doesNotHaveBean(CompactionBudgetService.class);
                     assertThat(context).doesNotHaveBean(SpringContextCompactorAdvisor.class);
+                    assertThat(context).doesNotHaveBean(McpCompactorDispatcher.class);
+                    assertThat(context).doesNotHaveBean(McpStdioServer.class);
+                    assertThat(context).doesNotHaveBean(CompactorMcpHttpController.class);
                 });
     }
 }
