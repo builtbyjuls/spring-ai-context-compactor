@@ -287,6 +287,8 @@ class McpCompactorDispatcherTest {
         assertThat(text).contains("// [METHOD SLICE]");
         assertThat(text).contains("TradeClearingService#clearTrade");
         assertThat(text).contains("applyMargin(tradeRef);");
+        // Verify raw un-numbered source lines (no line-number prefix like "   1: ")
+        assertThat(text).doesNotMatch("(?m)^\\s*\\d+:\\s");
     }
 
     @Test
@@ -410,10 +412,12 @@ class McpCompactorDispatcherTest {
         List<Map<String, Object>> content = (List<Map<String, Object>>) result.get("content");
         String text = (String) content.get(0).get("text");
 
-        assertThat(text).contains("// [AUTO-EXPANDED METHOD SLICES] (Ready for surgical edit_file)");
+        assertThat(text).contains("// [AUTO-EXPANDED METHOD SLICES] (Exact raw source lines ready for edit_file Target)");
         assertThat(text).contains("TradeClearingService#clearTrade");
         assertThat(text).contains("TradeClearingService#applyMargin");
         assertThat(text).contains("applyMargin(tradeRef);");
+        // Verify raw un-numbered source lines (no line-number prefix like "   1: ")
+        assertThat(text).doesNotMatch("(?m)^\\s*\\d+:\\s");
     }
 
     @Test
@@ -463,7 +467,7 @@ class McpCompactorDispatcherTest {
         List<Map<String, Object>> content = (List<Map<String, Object>>) result.get("content");
         String text = (String) content.get(0).get("text");
 
-        assertThat(text).contains("// [AUTO-EXPANDED METHOD SLICES] (Ready for surgical edit_file)");
+        assertThat(text).contains("// [AUTO-EXPANDED METHOD SLICES] (Exact raw source lines ready for edit_file Target)");
         assertThat(text).contains("ClearedTrade#getTradeId");
         assertThat(text).contains("ClearedTrade#setTradeId");
     }

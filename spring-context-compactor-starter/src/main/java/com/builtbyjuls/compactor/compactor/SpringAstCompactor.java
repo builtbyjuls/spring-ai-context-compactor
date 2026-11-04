@@ -116,6 +116,7 @@ public class SpringAstCompactor {
         }
 
         List<String> injectedDependencies = extractInjectedDependencies(primaryType, stereotype);
+        List<String> importedTypes = extractImportedTypes(cu);
 
         List<CompactedMethodSummaryDto> methodSummaries = new ArrayList<>();
         String classBodySkeleton = renderClassBody(cu, primaryType, stereotype, allTraps, methodSummaries);
@@ -130,6 +131,7 @@ public class SpringAstCompactor {
                 filePath,
                 stereotype,
                 injectedDependencies,
+                importedTypes,
                 origLines,
                 origTokens,
                 classBodySkeleton
@@ -146,6 +148,7 @@ public class SpringAstCompactor {
                 filePath,
                 stereotype,
                 injectedDependencies,
+                importedTypes,
                 origLines,
                 origTokens,
                 compactedLines,
@@ -217,17 +220,6 @@ public class SpringAstCompactor {
         cu.getPackageDeclaration().ifPresent(pkg ->
                 sb.append("package ").append(pkg.getNameAsString()).append(";\n\n")
         );
-
-        List<ImportDeclaration> retainedImports = cu.getImports().stream()
-                .filter(imp -> !isBoilerplateImport(imp))
-                .toList();
-
-        if (!retainedImports.isEmpty()) {
-            for (ImportDeclaration imp : retainedImports) {
-                sb.append(imp.toString());
-            }
-            sb.append("\n");
-        }
 
         for (AnnotationExpr annotation : primaryType.getAnnotations()) {
             sb.append(annotation.toString()).append("\n");
@@ -527,15 +519,32 @@ public class SpringAstCompactor {
                 .toList();
     }
 
-    private boolean isBoilerplateImport(ImportDeclaration imp) {
+    private List<String> extractImportedTypes(CompilationUnit cu) {
+        List<String> types = new ArrayList<>();
+        for (ImportDeclaration imp : cu.getImports()) {
+            String name = imp.getNameAsString();
+            if (isJavaLangImport(imp)) {
+                continue;
+            }
+            String formatted;
+            if (imp.isAsterisk()) {
+                formatted = name + ".*";
+            } else {
+                formatted = extractSimpleName(name);
+            }
+            if (!formatted.isBlank() && !types.contains(formatted)) {
+                types.add(formatted);
+            }
+        }
+        return Collections.unmodifiableList(types);
+    }
+
+    private boolean isJavaLangImport(ImportDeclaration imp) {
         String name = imp.getNameAsString();
-        return name.startsWith("java.util.")
-                || name.startsWith("java.time.")
-                || name.startsWith("java.io.")
-                || name.startsWith("lombok.")
-                || name.startsWith("jakarta.persistence.")
-                || name.startsWith("jakarta.validation.")
-                || name.startsWith("org.springframework.");
+        if (imp.isAsterisk()) {
+            return "java.lang".equals(name);
+        }
+        return name.startsWith("java.lang.") && !name.substring("java.lang.".length()).contains(".");
     }
 
     private boolean isBoilerplateConstructor(ConstructorDeclaration constructor, SpringStereotype stereotype) {
@@ -581,7 +590,7 @@ public class SpringAstCompactor {
             }
         }
 
-        if (method.isPrivate()) {
+        if (method.isPrivate() && stereotype == SpringStereotype.ENTITY) {
             return !hasAnyAnnotation(method, SPRING_LIFECYCLE_OR_MESSAGING_ANNOTATIONS);
         }
 
@@ -624,11 +633,15 @@ public class SpringAstCompactor {
             String filePath,
             SpringStereotype stereotype,
             List<String> injectedDependencies,
+            List<String> importedTypes,
             int origLines,
             int origTokens,
             String classBodySkeleton
     ) {
-        int estimatedCompactedLines = (int) classBodySkeleton.lines().count() + (injectedDependencies.isEmpty() ? 2 : 3);
+        int estimatedCompactedLines = (int) classBodySkeleton.lines().count()
+                + 2
+                + (injectedDependencies.isEmpty() ? 0 : 1)
+                + (importedTypes.isEmpty() ? 0 : 1);
         int estimatedCompactedTokens = (int) Math.ceil((classBodySkeleton.length() + 150) / 4.0);
         double estimatedReduction = origTokens > 0
                 ? Math.max(0.0, ((double) (origTokens - estimatedCompactedTokens) / origTokens) * 100.0)
@@ -638,6 +651,7 @@ public class SpringAstCompactor {
                 filePath,
                 stereotype,
                 injectedDependencies,
+                importedTypes,
                 origLines,
                 origTokens,
                 estimatedCompactedLines,
@@ -652,6 +666,7 @@ public class SpringAstCompactor {
             String filePath,
             SpringStereotype stereotype,
             List<String> injectedDependencies,
+            List<String> importedTypes,
             int origLines,
             int origTokens,
             int compactedLines,
@@ -673,6 +688,11 @@ public class SpringAstCompactor {
         if (!injectedDependencies.isEmpty()) {
             sb.append("// Injected Beans: [")
                     .append(String.join(", ", injectedDependencies))
+                    .append("]\n");
+        }
+        if (!importedTypes.isEmpty()) {
+            sb.append("// Imported Types: [")
+                    .append(String.join(", ", importedTypes))
                     .append("]\n");
         }
         return sb.toString();

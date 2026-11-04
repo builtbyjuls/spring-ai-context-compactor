@@ -273,12 +273,18 @@ class SpringSliceExpanderTest {
                     }
 
                     public void calculateNetPosition(String memberId) {
+                        if (memberId == null || memberId.isBlank()) {
+                            throw new IllegalArgumentException("memberId must not be null or blank for netting computation");
+                        }
                         for (int i = 0; i < 50; i++) {
                             System.out.println("Netting calculation iteration: " + i);
                         }
                     }
 
                     public boolean verifyCounterpartyLimits(String counterparty, double notional) {
+                        if (counterparty == null || counterparty.isBlank()) {
+                            throw new IllegalArgumentException("counterparty must not be null or blank");
+                        }
                         if (notional > 1_000_000.0) {
                             System.out.println("High exposure counterparty check");
                             return false;

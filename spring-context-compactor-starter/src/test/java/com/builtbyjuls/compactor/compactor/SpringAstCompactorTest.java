@@ -2,6 +2,7 @@ package com.builtbyjuls.compactor.compactor;
 
 import com.builtbyjuls.compactor.config.CompactorProperties;
 import com.builtbyjuls.compactor.model.CompactedFileResultDto;
+import com.builtbyjuls.compactor.model.CompactedMethodSummaryDto;
 import com.builtbyjuls.compactor.model.ProxyTrapType;
 import com.builtbyjuls.compactor.model.SpringStereotype;
 import org.junit.jupiter.api.BeforeEach;
@@ -626,5 +627,89 @@ class SpringAstCompactorTest {
         assertThat(result.methods().get(0).retainedAnnotations()).contains("@Transactional");
         assertThat(result.methods().get(0).retainedAnnotations()).noneMatch(a -> a.contains("Override"));
         assertThat(result.methods().get(1).retainedAnnotations()).noneMatch(a -> a.contains("Override"));
+    }
+
+    @Test
+    @DisplayName("Compacts multi-line imports into single-line Imported Types header and removes raw import lines")
+    void compactsImportsIntoSingleLineHeaderBannerAndOmitsMultiLineImports() {
+        String sourceWithImports = """
+                package org.springframework.samples.petclinic.owner;
+
+                import java.lang.String;
+                import java.lang.*;
+                import java.util.*;
+                import org.springframework.http.HttpStatus;
+                import org.springframework.samples.petclinic.model.Owner;
+                import org.springframework.samples.petclinic.model.Pet;
+                import org.springframework.stereotype.Service;
+
+                @Service
+                public class OwnerService {
+                    public Owner findOwner(int id) {
+                        return null;
+                    }
+                }
+                """;
+
+        CompactedFileResultDto result = compactor.compactSource("OwnerService.java", sourceWithImports);
+        String skeleton = result.compactedSkeleton();
+
+        assertThat(skeleton).contains("// Imported Types: [java.util.*, HttpStatus, Owner, Pet, Service]");
+        assertThat(skeleton).doesNotContain("import ");
+        assertThat(skeleton).doesNotContain("java.lang.*");
+    }
+
+    @Test
+    @DisplayName("Retains private helper method signatures in @Service classes while omitting them in @Entity classes")
+    void retainsPrivateHelperMethodSignaturesInNonEntityClasses() {
+        String serviceSource = """
+                package com.builtbyjuls.clearing.service;
+
+                import org.springframework.stereotype.Service;
+
+                @Service
+                public class TradeReferenceService {
+
+                    public String resolveReference(String raw) {
+                        return normalizeRef(raw);
+                    }
+
+                    private String normalizeRef(String ref) {
+                        return ref == null ? "" : ref.trim().toUpperCase();
+                    }
+                }
+                """;
+
+        CompactedFileResultDto serviceResult = compactor.compactSource("TradeReferenceService.java", serviceSource);
+        String serviceSkeleton = serviceResult.compactedSkeleton();
+
+        assertThat(serviceSkeleton).contains("private String normalizeRef(String ref)");
+        assertThat(serviceSkeleton).contains("body omitted");
+        assertThat(serviceResult.methods()).extracting(CompactedMethodSummaryDto::methodName)
+                .contains("resolveReference", "normalizeRef");
+
+        String entitySource = """
+                package com.builtbyjuls.clearing.trade;
+
+                import jakarta.persistence.Entity;
+                import jakarta.persistence.Id;
+
+                @Entity
+                public class SimpleEntity {
+                    @Id
+                    private Long id;
+
+                    private void internalEntityHelper() {
+                        System.out.println("internal");
+                    }
+                }
+                """;
+
+        CompactedFileResultDto entityResult = compactor.compactSource("SimpleEntity.java", entitySource);
+        String entitySkeleton = entityResult.compactedSkeleton();
+
+        assertThat(entitySkeleton).doesNotContain("internalEntityHelper");
+        assertThat(entityResult.methods()).extracting(CompactedMethodSummaryDto::methodName)
+                .doesNotContain("internalEntityHelper");
     }
 }

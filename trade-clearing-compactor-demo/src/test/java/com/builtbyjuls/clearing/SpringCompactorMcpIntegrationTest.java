@@ -19,6 +19,8 @@ import static org.hamcrest.Matchers.containsString;
 import static org.hamcrest.Matchers.greaterThanOrEqualTo;
 import static org.hamcrest.Matchers.hasItem;
 import static org.hamcrest.Matchers.hasSize;
+import static org.hamcrest.Matchers.matchesRegex;
+import static org.hamcrest.Matchers.not;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
@@ -112,7 +114,7 @@ class SpringCompactorMcpIntegrationTest extends ClearingTestContainersBase {
                 .andExpect(jsonPath("$.result.structuredContent.className").value("TradeClearingService"))
                 .andExpect(jsonPath("$.result.structuredContent.stereotype").value("SERVICE"))
                 .andExpect(jsonPath("$.result.content[0].type").value("text"))
-                .andExpect(jsonPath("$.result.content[0].text").value(containsString("// [AUTO-EXPANDED METHOD SLICES] (Ready for surgical edit_file)")))
+                .andExpect(jsonPath("$.result.content[0].text").value(containsString("// [AUTO-EXPANDED METHOD SLICES] (Exact raw source lines ready for edit_file Target)")))
                 .andExpect(jsonPath("$.result.content[0].text").value(containsString("inspectMemberPortfolioWithSnapshotTouch")))
                 .andExpect(jsonPath("$.result.content[0].text").value(containsString("recordInternalComplianceStamp")));
     }
@@ -134,7 +136,7 @@ class SpringCompactorMcpIntegrationTest extends ClearingTestContainersBase {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.id").value(31))
                 .andExpect(jsonPath("$.result.isError").value(false))
-                .andExpect(jsonPath("$.result.content[0].text").value(containsString("// [AUTO-EXPANDED METHOD SLICES] (Ready for surgical edit_file)")))
+                .andExpect(jsonPath("$.result.content[0].text").value(containsString("// [AUTO-EXPANDED METHOD SLICES] (Exact raw source lines ready for edit_file Target)")))
                 .andExpect(jsonPath("$.result.content[0].text").value(containsString("TradeClearingService#novateAndClearTrade")));
     }
 
@@ -177,7 +179,9 @@ class SpringCompactorMcpIntegrationTest extends ClearingTestContainersBase {
                 .andExpect(jsonPath("$.id").value(5))
                 .andExpect(jsonPath("$.result.isError").value(false))
                 .andExpect(jsonPath("$.result.structuredContent[0].methodName").value("novateAndClearTrade"))
-                .andExpect(jsonPath("$.result.content[0].text").isString());
+                .andExpect(jsonPath("$.result.content[0].text").isString())
+                .andExpect(jsonPath("$.result.content[0].text").value(containsString("// [METHOD SLICE]")))
+                .andExpect(jsonPath("$.result.content[0].text").value(not(matchesRegex("(?s).*(?m)^\\s*\\d+:\\s.*"))));
     }
 
     @Test

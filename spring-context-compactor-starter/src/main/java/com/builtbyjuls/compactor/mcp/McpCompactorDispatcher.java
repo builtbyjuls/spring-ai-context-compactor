@@ -244,11 +244,9 @@ public class McpCompactorDispatcher {
             List<MethodBodySliceDto> autoSlices = sliceExpander.expandMethodBodies(root, matchedFile.filePath(), methodsToExpand);
             if (!autoSlices.isEmpty()) {
                 String formattedSlices = autoSlices.stream()
-                        .map(slice -> "// [METHOD SLICE] " + slice.filePath() + " | " + slice.className() + "#" + slice.methodName()
-                                + " (L" + slice.startLine() + "-L" + slice.endLine() + ", ~" + slice.estimatedTokens() + " tokens)\n"
-                                + slice.numberedSourceLines())
+                        .map(this::formatRawMethodSlice)
                         .collect(Collectors.joining("\n\n"));
-                responseText = responseText.stripTrailing() + "\n\n// [AUTO-EXPANDED METHOD SLICES] (Ready for surgical edit_file)\n" + formattedSlices;
+                responseText = responseText.stripTrailing() + "\n\n// [AUTO-EXPANDED METHOD SLICES] (Exact raw source lines ready for edit_file Target)\n" + formattedSlices;
             }
         }
 
@@ -333,9 +331,7 @@ public class McpCompactorDispatcher {
         }
 
         String formattedText = slices.stream()
-                .map(slice -> "// [METHOD SLICE] " + slice.filePath() + " | " + slice.className() + "#" + slice.methodName()
-                        + " (L" + slice.startLine() + "-L" + slice.endLine() + ", ~" + slice.estimatedTokens() + " tokens)\n"
-                        + slice.numberedSourceLines())
+                .map(this::formatRawMethodSlice)
                 .collect(Collectors.joining("\n\n"));
 
         return McpJsonRpcResponse.success(requestId, Map.of(
@@ -343,6 +339,15 @@ public class McpCompactorDispatcher {
                 "structuredContent", slices,
                 "isError", false
         ));
+    }
+
+    private String formatRawMethodSlice(MethodBodySliceDto slice) {
+        String rawLines = slice.numberedSourceLines().lines()
+                .map(line -> line.replaceFirst("^\\s*\\d+:\\s?", ""))
+                .collect(Collectors.joining("\n"));
+        return "// [METHOD SLICE] " + slice.filePath() + " | " + slice.className() + "#" + slice.methodName()
+                + " (L" + slice.startLine() + "-L" + slice.endLine() + ", ~" + slice.estimatedTokens() + " tokens)\n"
+                + rawLines;
     }
 
     private McpJsonRpcResponse callAnalyzeCompactionBudget(Object requestId, Map<String, Object> arguments) {
