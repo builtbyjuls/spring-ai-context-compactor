@@ -588,4 +588,43 @@ class SpringAstCompactorTest {
         assertThat(skeleton).contains("/* body omitted (");
         assertThat(skeleton).doesNotContain("/* L");
     }
+
+    @Test
+    @DisplayName("Strips redundant @Override annotations from methods while preserving @Transactional and mapping annotations")
+    void stripsOverrideAnnotationWhilePreservingSpringWiring() {
+        String serviceWithOverride = """
+                package com.builtbyjuls.clearing.service;
+
+                import org.springframework.stereotype.Service;
+                import org.springframework.transaction.annotation.Transactional;
+
+                @Service
+                public class TradeServiceImpl implements TradeService {
+
+                    @Override
+                    @Transactional
+                    public void clearTrade(String tradeRef) {
+                        System.out.println("clearing " + tradeRef);
+                    }
+
+                    @Override
+                    public String getStatus(String tradeRef) {
+                        return "CLEARED";
+                    }
+                }
+                """;
+
+        CompactedFileResultDto result = compactor.compactSource("TradeServiceImpl.java", serviceWithOverride);
+        String skeleton = result.compactedSkeleton();
+
+        assertThat(skeleton).doesNotContain("@Override");
+        assertThat(skeleton).contains("@Transactional");
+        assertThat(skeleton).contains("public void clearTrade(String tradeRef)");
+        assertThat(skeleton).contains("public String getStatus(String tradeRef)");
+
+        assertThat(result.methods()).hasSize(2);
+        assertThat(result.methods().get(0).retainedAnnotations()).contains("@Transactional");
+        assertThat(result.methods().get(0).retainedAnnotations()).noneMatch(a -> a.contains("Override"));
+        assertThat(result.methods().get(1).retainedAnnotations()).noneMatch(a -> a.contains("Override"));
+    }
 }

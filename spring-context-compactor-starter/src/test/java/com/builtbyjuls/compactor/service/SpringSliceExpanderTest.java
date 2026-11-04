@@ -494,4 +494,48 @@ class SpringSliceExpanderTest {
         );
         assertThat(unknownFile).isEmpty();
     }
+
+    @Test
+    @DisplayName("expandMethodBody supports comma-separated method names and wildcard *")
+    void expandMethodBodyBatchAndWildcard(@TempDir Path tempDir) throws IOException {
+        createSampleSourceTree(tempDir);
+
+        List<MethodBodySliceDto> batchSlices = sliceExpander.expandMethodBody(
+                tempDir,
+                "TradeService",
+                "auditTrade, calculateNetPosition"
+        );
+
+        assertThat(batchSlices).hasSize(2);
+        assertThat(batchSlices.stream().map(MethodBodySliceDto::methodName).toList())
+                .containsExactly("auditTrade", "calculateNetPosition");
+
+        List<MethodBodySliceDto> allSlices = sliceExpander.expandMethodBody(
+                tempDir,
+                "TradeService",
+                "*"
+        );
+        assertThat(allSlices).hasSize(5);
+        assertThat(allSlices.stream().map(MethodBodySliceDto::methodName).toList())
+                .contains("bookTrade", "auditTrade", "calculateNetPosition", "verifyCounterpartyLimits");
+    }
+
+    @Test
+    @DisplayName("expandMethodBodies convenience overload delegates and unfolds multiple methods")
+    void expandMethodBodiesCollectionOverload(@TempDir Path tempDir) throws IOException {
+        createSampleSourceTree(tempDir);
+
+        List<MethodBodySliceDto> slices = sliceExpander.expandMethodBodies(
+                tempDir,
+                "TradeService",
+                List.of("auditTrade", "verifyCounterpartyLimits")
+        );
+
+        assertThat(slices).hasSize(2);
+        assertThat(slices.get(0).methodName()).isEqualTo("auditTrade");
+        assertThat(slices.get(1).methodName()).isEqualTo("verifyCounterpartyLimits");
+
+        assertThat(sliceExpander.expandMethodBodies(tempDir, "TradeService", List.of())).isEmpty();
+        assertThat(sliceExpander.expandMethodBodies(tempDir, "TradeService", null)).isEmpty();
+    }
 }

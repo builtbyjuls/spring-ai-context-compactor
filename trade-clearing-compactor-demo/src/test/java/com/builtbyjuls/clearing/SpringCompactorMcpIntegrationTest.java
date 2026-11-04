@@ -15,6 +15,7 @@ import org.springframework.web.context.WebApplicationContext;
 
 import java.util.Map;
 
+import static org.hamcrest.Matchers.containsString;
 import static org.hamcrest.Matchers.greaterThanOrEqualTo;
 import static org.hamcrest.Matchers.hasItem;
 import static org.hamcrest.Matchers.hasSize;
@@ -95,7 +96,7 @@ class SpringCompactorMcpIntegrationTest extends ClearingTestContainersBase {
     }
 
     @Test
-    @DisplayName("POST /internal/spring-compactor/mcp tools/call compact_spring_file compacts TradeClearingService")
+    @DisplayName("POST /internal/spring-compactor/mcp tools/call compact_spring_file compacts TradeClearingService and auto-expands proxy trap slices")
     void mcpToolCallCompactSpringFile() throws Exception {
         McpJsonRpcRequest request = new McpJsonRpcRequest("2.0", 3, "tools/call", Map.of(
                 "name", "compact_spring_file",
@@ -111,7 +112,30 @@ class SpringCompactorMcpIntegrationTest extends ClearingTestContainersBase {
                 .andExpect(jsonPath("$.result.structuredContent.className").value("TradeClearingService"))
                 .andExpect(jsonPath("$.result.structuredContent.stereotype").value("SERVICE"))
                 .andExpect(jsonPath("$.result.content[0].type").value("text"))
-                .andExpect(jsonPath("$.result.content[0].text").isString());
+                .andExpect(jsonPath("$.result.content[0].text").value(containsString("// [AUTO-EXPANDED METHOD SLICES] (Ready for surgical edit_file)")))
+                .andExpect(jsonPath("$.result.content[0].text").value(containsString("inspectMemberPortfolioWithSnapshotTouch")))
+                .andExpect(jsonPath("$.result.content[0].text").value(containsString("recordInternalComplianceStamp")));
+    }
+
+    @Test
+    @DisplayName("POST /internal/spring-compactor/mcp tools/call compact_spring_file unfolds explicitly requested expandMethods")
+    void mcpToolCallCompactSpringFileExpandMethods() throws Exception {
+        McpJsonRpcRequest request = new McpJsonRpcRequest("2.0", 31, "tools/call", Map.of(
+                "name", "compact_spring_file",
+                "arguments", Map.of(
+                        "query", "TradeClearingService",
+                        "expandMethods", "novateAndClearTrade"
+                )
+        ));
+
+        mockMvc.perform(post("/internal/spring-compactor/mcp")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(request)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.id").value(31))
+                .andExpect(jsonPath("$.result.isError").value(false))
+                .andExpect(jsonPath("$.result.content[0].text").value(containsString("// [AUTO-EXPANDED METHOD SLICES] (Ready for surgical edit_file)")))
+                .andExpect(jsonPath("$.result.content[0].text").value(containsString("TradeClearingService#novateAndClearTrade")));
     }
 
     @Test
@@ -154,6 +178,28 @@ class SpringCompactorMcpIntegrationTest extends ClearingTestContainersBase {
                 .andExpect(jsonPath("$.result.isError").value(false))
                 .andExpect(jsonPath("$.result.structuredContent[0].methodName").value("novateAndClearTrade"))
                 .andExpect(jsonPath("$.result.content[0].text").isString());
+    }
+
+    @Test
+    @DisplayName("POST /internal/spring-compactor/mcp tools/call read_spring_method_body unfolds batch method names in single round-trip")
+    void mcpToolCallReadSpringMethodBodyBatch() throws Exception {
+        McpJsonRpcRequest request = new McpJsonRpcRequest("2.0", 51, "tools/call", Map.of(
+                "name", "read_spring_method_body",
+                "arguments", Map.of(
+                        "classQuery", "TradeClearingService",
+                        "methodName", "novateAndClearTrade, recordInternalComplianceStamp"
+                )
+        ));
+
+        mockMvc.perform(post("/internal/spring-compactor/mcp")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(request)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.id").value(51))
+                .andExpect(jsonPath("$.result.isError").value(false))
+                .andExpect(jsonPath("$.result.structuredContent", hasSize(2)))
+                .andExpect(jsonPath("$.result.content[0].text").value(containsString("TradeClearingService#novateAndClearTrade")))
+                .andExpect(jsonPath("$.result.content[0].text").value(containsString("TradeClearingService#recordInternalComplianceStamp")));
     }
 
     @Test

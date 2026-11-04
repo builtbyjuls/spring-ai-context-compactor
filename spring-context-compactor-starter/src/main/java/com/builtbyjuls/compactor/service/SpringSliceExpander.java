@@ -22,10 +22,14 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.Collection;
 import java.util.Collections;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Objects;
+import java.util.Set;
 import java.util.stream.Collectors;
 
 public class SpringSliceExpander {
@@ -120,12 +124,36 @@ public class SpringSliceExpander {
         );
     }
 
+    public List<MethodBodySliceDto> expandMethodBodies(Path sourceRoot, String fileOrClassQuery, Collection<String> methodNames) {
+        if (methodNames == null || methodNames.isEmpty()) {
+            return List.of();
+        }
+        String joined = methodNames.stream()
+                .filter(Objects::nonNull)
+                .map(String::trim)
+                .filter(s -> !s.isEmpty())
+                .collect(Collectors.joining(","));
+        if (joined.isEmpty()) {
+            return List.of();
+        }
+        return expandMethodBody(sourceRoot, fileOrClassQuery, joined);
+    }
+
     public List<MethodBodySliceDto> expandMethodBody(Path sourceRoot, String fileOrClassQuery, String methodName) {
         if (sourceRoot == null || !Files.exists(sourceRoot)
                 || fileOrClassQuery == null || fileOrClassQuery.isBlank()
                 || methodName == null || methodName.isBlank()) {
             return List.of();
         }
+
+        Set<String> targetMethods = Arrays.stream(methodName.split(","))
+                .map(String::trim)
+                .filter(s -> !s.isEmpty())
+                .collect(Collectors.toCollection(LinkedHashSet::new));
+        if (targetMethods.isEmpty()) {
+            return List.of();
+        }
+        boolean matchAll = targetMethods.contains("*");
 
         Path normalizedRoot = sourceRoot.toAbsolutePath().normalize();
         List<Path> matchingFiles = locateMatchingFiles(normalizedRoot, fileOrClassQuery.trim());
@@ -134,7 +162,6 @@ public class SpringSliceExpander {
         }
 
         List<MethodBodySliceDto> results = new ArrayList<>();
-        String targetMethod = methodName.trim();
 
         for (Path file : matchingFiles) {
             List<String> originalLines;
@@ -166,7 +193,7 @@ public class SpringSliceExpander {
             }
 
             for (MethodDeclaration method : primaryType.getMethods()) {
-                if (method.getNameAsString().equals(targetMethod)) {
+                if (matchAll || targetMethods.contains(method.getNameAsString())) {
                     int startLine = method.getBegin().map(p -> p.line).orElse(1);
                     for (AnnotationExpr ann : method.getAnnotations()) {
                         if (ann.getBegin().isPresent()) {

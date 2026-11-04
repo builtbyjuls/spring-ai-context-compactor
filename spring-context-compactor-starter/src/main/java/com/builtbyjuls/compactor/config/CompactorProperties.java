@@ -14,6 +14,7 @@ public class CompactorProperties {
     private String reportOutputDir = "target/compactor-reports";
     private boolean failOnProxyTraps = false;
     private boolean logConsoleSummary = true;
+    private boolean autoExpandTrappedMethodsInMcp = true;
 
     public boolean isEnabled() {
         return enabled;
@@ -85,5 +86,13 @@ public class CompactorProperties {
 
     public void setLogConsoleSummary(boolean logConsoleSummary) {
         this.logConsoleSummary = logConsoleSummary;
+    }
+
+    public boolean isAutoExpandTrappedMethodsInMcp() {
+        return autoExpandTrappedMethodsInMcp;
+    }
+
+    public void setAutoExpandTrappedMethodsInMcp(boolean autoExpandTrappedMethodsInMcp) {
+        this.autoExpandTrappedMethodsInMcp = autoExpandTrappedMethodsInMcp;
     }
 }

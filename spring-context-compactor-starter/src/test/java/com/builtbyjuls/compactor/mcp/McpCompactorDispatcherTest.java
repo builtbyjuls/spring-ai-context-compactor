@@ -388,4 +388,137 @@ class McpCompactorDispatcherTest {
         assertThat(request.params()).containsKey("optionalField");
         assertThat(request.params().get("optionalField")).isNull();
     }
+
+    @Test
+    @DisplayName("tools/call compact_spring_file automatically auto-expands proxy trap method slices")
+    void toolsCallCompactSpringFileAutoExpandsTraps() {
+        McpJsonRpcRequest request = new McpJsonRpcRequest("2.0", 20, "tools/call", Map.of(
+                "name", "compact_spring_file",
+                "arguments", Map.of(
+                        "query", "TradeClearingService",
+                        "sourceRoot", tempDir.toString()
+                )
+        ));
+
+        McpJsonRpcResponse response = dispatcher.dispatch(request);
+        assertThat(response).isNotNull();
+        assertThat(response.error()).isNull();
+
+        @SuppressWarnings("unchecked")
+        Map<String, Object> result = (Map<String, Object>) response.result();
+        @SuppressWarnings("unchecked")
+        List<Map<String, Object>> content = (List<Map<String, Object>>) result.get("content");
+        String text = (String) content.get(0).get("text");
+
+        assertThat(text).contains("// [AUTO-EXPANDED METHOD SLICES] (Ready for surgical edit_file)");
+        assertThat(text).contains("TradeClearingService#clearTrade");
+        assertThat(text).contains("TradeClearingService#applyMargin");
+        assertThat(text).contains("applyMargin(tradeRef);");
+    }
+
+    @Test
+    @DisplayName("tools/call compact_spring_file honors expandTrappedMethods=false by omitting auto-expanded section")
+    void toolsCallCompactSpringFileDisablesAutoExpandTraps() {
+        McpJsonRpcRequest request = new McpJsonRpcRequest("2.0", 21, "tools/call", Map.of(
+                "name", "compact_spring_file",
+                "arguments", Map.of(
+                        "query", "TradeClearingService",
+                        "expandTrappedMethods", false,
+                        "sourceRoot", tempDir.toString()
+                )
+        ));
+
+        McpJsonRpcResponse response = dispatcher.dispatch(request);
+        assertThat(response).isNotNull();
+        assertThat(response.error()).isNull();
+
+        @SuppressWarnings("unchecked")
+        Map<String, Object> result = (Map<String, Object>) response.result();
+        @SuppressWarnings("unchecked")
+        List<Map<String, Object>> content = (List<Map<String, Object>>) result.get("content");
+        String text = (String) content.get(0).get("text");
+
+        assertThat(text).doesNotContain("// [AUTO-EXPANDED METHOD SLICES]");
+    }
+
+    @Test
+    @DisplayName("tools/call compact_spring_file unfolds explicitly requested expandMethods")
+    void toolsCallCompactSpringFileWithExpandMethods() {
+        McpJsonRpcRequest request = new McpJsonRpcRequest("2.0", 22, "tools/call", Map.of(
+                "name", "compact_spring_file",
+                "arguments", Map.of(
+                        "query", "ClearedTrade",
+                        "expandMethods", "getTradeId, setTradeId",
+                        "sourceRoot", tempDir.toString()
+                )
+        ));
+
+        McpJsonRpcResponse response = dispatcher.dispatch(request);
+        assertThat(response).isNotNull();
+        assertThat(response.error()).isNull();
+
+        @SuppressWarnings("unchecked")
+        Map<String, Object> result = (Map<String, Object>) response.result();
+        @SuppressWarnings("unchecked")
+        List<Map<String, Object>> content = (List<Map<String, Object>>) result.get("content");
+        String text = (String) content.get(0).get("text");
+
+        assertThat(text).contains("// [AUTO-EXPANDED METHOD SLICES] (Ready for surgical edit_file)");
+        assertThat(text).contains("ClearedTrade#getTradeId");
+        assertThat(text).contains("ClearedTrade#setTradeId");
+    }
+
+    @Test
+    @DisplayName("tools/call read_spring_method_body supports comma-separated batch method unfolding")
+    void toolsCallReadSpringMethodBodyBatchUnfolding() {
+        McpJsonRpcRequest request = new McpJsonRpcRequest("2.0", 23, "tools/call", Map.of(
+                "name", "read_spring_method_body",
+                "arguments", Map.of(
+                        "classQuery", "TradeClearingService",
+                        "methodName", "clearTrade, applyMargin",
+                        "sourceRoot", tempDir.toString()
+                )
+        ));
+
+        McpJsonRpcResponse response = dispatcher.dispatch(request);
+        assertThat(response).isNotNull();
+        assertThat(response.error()).isNull();
+
+        @SuppressWarnings("unchecked")
+        Map<String, Object> result = (Map<String, Object>) response.result();
+        @SuppressWarnings("unchecked")
+        List<MethodBodySliceDto> slices = (List<MethodBodySliceDto>) result.get("structuredContent");
+        assertThat(slices).hasSize(2);
+        assertThat(slices.stream().map(MethodBodySliceDto::methodName).toList())
+                .containsExactly("clearTrade", "applyMargin");
+
+        @SuppressWarnings("unchecked")
+        List<Map<String, Object>> content = (List<Map<String, Object>>) result.get("content");
+        String text = (String) content.get(0).get("text");
+        assertThat(text).contains("TradeClearingService#clearTrade");
+        assertThat(text).contains("TradeClearingService#applyMargin");
+    }
+
+    @Test
+    @DisplayName("tools/call read_spring_method_body supports methodNames parameter as string or collection")
+    void toolsCallReadSpringMethodBodyMethodNamesParam() {
+        McpJsonRpcRequest request = new McpJsonRpcRequest("2.0", 24, "tools/call", Map.of(
+                "name", "read_spring_method_body",
+                "arguments", Map.of(
+                        "classQuery", "TradeClearingService",
+                        "methodNames", List.of("clearTrade", "applyMargin"),
+                        "sourceRoot", tempDir.toString()
+                )
+        ));
+
+        McpJsonRpcResponse response = dispatcher.dispatch(request);
+        assertThat(response).isNotNull();
+        assertThat(response.error()).isNull();
+
+        @SuppressWarnings("unchecked")
+        Map<String, Object> result = (Map<String, Object>) response.result();
+        @SuppressWarnings("unchecked")
+        List<MethodBodySliceDto> slices = (List<MethodBodySliceDto>) result.get("structuredContent");
+        assertThat(slices).hasSize(2);
+    }
 }

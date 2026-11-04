@@ -259,6 +259,7 @@ public class SpringAstCompactor {
                     }).orElse(0);
 
                     List<String> retainedAnnotations = method.getAnnotations().stream()
+                            .filter(a -> !"Override".equals(extractSimpleName(a.getNameAsString())))
                             .map(Node::toString)
                             .toList();
 
@@ -462,6 +463,9 @@ public class SpringAstCompactor {
     ) {
         StringBuilder sb = new StringBuilder();
         for (AnnotationExpr annotation : method.getAnnotations()) {
+            if ("Override".equals(extractSimpleName(annotation.getNameAsString()))) {
+                continue;
+            }
             sb.append("    ").append(annotation.toString()).append("\n");
         }
         sb.append("    ").append(signature);

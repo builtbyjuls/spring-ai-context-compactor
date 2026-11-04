@@ -4,6 +4,7 @@ import com.builtbyjuls.compactor.compactor.SpringAstCompactor;
 import com.builtbyjuls.compactor.config.CompactorProperties;
 import com.builtbyjuls.compactor.model.CompactedFileResultDto;
 import com.builtbyjuls.compactor.model.MethodBodySliceDto;
+import com.builtbyjuls.compactor.model.MethodTrapNoteDto;
 import com.builtbyjuls.compactor.model.ProjectCompactionBudgetDto;
 import com.builtbyjuls.compactor.model.SliceCompactionReportDto;
 import com.builtbyjuls.compactor.service.CompactionBudgetService;
@@ -13,9 +14,12 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.Collection;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Set;
 import java.util.stream.Collectors;
 
 public class McpCompactorDispatcher {
@@ -99,6 +103,8 @@ public class McpCompactorDispatcher {
                                 "properties", Map.of(
                                         "query", Map.of("type", "string", "description", "Relative file path or simple class name (e.g. TradeClearingService or ClearedTrade.java)"),
                                         "fileOrClassQuery", Map.of("type", "string", "description", "Alternative query parameter name for relative path or class name"),
+                                        "expandMethods", Map.of("type", "string", "description", "Optional comma-separated method names to unfold with 1-based line numbers below the skeleton in the same call"),
+                                        "expandTrappedMethods", Map.of("type", "boolean", "description", "Automatically unfold 1-based line-numbered method bodies for any methods involved in detected @Transactional proxy traps (default: true)"),
                                         "sourceRoot", Map.of("type", "string", "description", "Optional override for Java source root directory")
                                 ),
                                 "required", List.of("query")
@@ -118,13 +124,14 @@ public class McpCompactorDispatcher {
                 ),
                 new McpToolDefinition(
                         "read_spring_method_body",
-                        "Unfolds exact 1-based line-numbered raw source code for a specific method body on demand",
+                        "Unfolds exact 1-based line-numbered raw source code for one or more methods on demand. Pass a comma-separated list in methodName (e.g. 'savePet,findPetTypeById') or methodNames to unfold multiple methods in a single call",
                         Map.of(
                                 "type", "object",
                                 "properties", Map.of(
                                         "classQuery", Map.of("type", "string", "description", "Target class name or file path"),
                                         "fileOrClassQuery", Map.of("type", "string", "description", "Alternative query parameter name for target class name"),
                                         "methodName", Map.of("type", "string", "description", "Target method name to unfold"),
+                                        "methodNames", Map.of("type", "string", "description", "Optional comma-separated list of method names to unfold in a single call"),
                                         "sourceRoot", Map.of("type", "string", "description", "Optional override for Java source root directory")
                                 ),
                                 "required", List.of("classQuery", "methodName")
@@ -194,8 +201,59 @@ public class McpCompactorDispatcher {
                 .findFirst()
                 .orElse(report.files().get(0));
 
+        boolean expandTrapped = extractBoolean(arguments, "expandTrappedMethods", properties.isAutoExpandTrappedMethodsInMcp());
+        Set<String> methodsToExpand = new LinkedHashSet<>();
+
+        if (expandTrapped && !matchedFile.trapNotes().isEmpty()) {
+            for (MethodTrapNoteDto trap : matchedFile.trapNotes()) {
+                if (trap.callerMethod() != null && !trap.callerMethod().isBlank()) {
+                    methodsToExpand.add(trap.callerMethod().trim());
+                }
+                if (trap.targetMethod() != null && !trap.targetMethod().isBlank()) {
+                    methodsToExpand.add(trap.targetMethod().trim());
+                }
+            }
+        }
+
+        Object rawExpandMethods = arguments.get("expandMethods");
+        if (rawExpandMethods == null) {
+            rawExpandMethods = arguments.get("methodNames");
+        }
+        if (rawExpandMethods instanceof String s && !s.isBlank()) {
+            for (String m : s.split(",")) {
+                String trimmed = m.trim();
+                if (!trimmed.isEmpty()) {
+                    methodsToExpand.add(trimmed);
+                }
+            }
+        } else if (rawExpandMethods instanceof Collection<?> col) {
+            for (Object item : col) {
+                if (item != null) {
+                    for (String m : item.toString().split(",")) {
+                        String trimmed = m.trim();
+                        if (!trimmed.isEmpty()) {
+                            methodsToExpand.add(trimmed);
+                        }
+                    }
+                }
+            }
+        }
+
+        String responseText = matchedFile.compactedSkeleton();
+        if (!methodsToExpand.isEmpty()) {
+            List<MethodBodySliceDto> autoSlices = sliceExpander.expandMethodBodies(root, matchedFile.filePath(), methodsToExpand);
+            if (!autoSlices.isEmpty()) {
+                String formattedSlices = autoSlices.stream()
+                        .map(slice -> "// [METHOD SLICE] " + slice.filePath() + " | " + slice.className() + "#" + slice.methodName()
+                                + " (L" + slice.startLine() + "-L" + slice.endLine() + ", ~" + slice.estimatedTokens() + " tokens)\n"
+                                + slice.numberedSourceLines())
+                        .collect(Collectors.joining("\n\n"));
+                responseText = responseText.stripTrailing() + "\n\n// [AUTO-EXPANDED METHOD SLICES] (Ready for surgical edit_file)\n" + formattedSlices;
+            }
+        }
+
         return McpJsonRpcResponse.success(requestId, Map.of(
-                "content", List.of(Map.of("type", "text", "text", matchedFile.compactedSkeleton())),
+                "content", List.of(Map.of("type", "text", "text", responseText)),
                 "structuredContent", matchedFile,
                 "isError", false
         ));
@@ -228,18 +286,50 @@ public class McpCompactorDispatcher {
         if (classQuery == null || classQuery.isBlank()) {
             classQuery = extractString(arguments, "fileOrClassQuery");
         }
-        String methodName = extractString(arguments, "methodName");
 
-        if (classQuery == null || classQuery.isBlank() || methodName == null || methodName.isBlank()) {
+        Set<String> requestedMethods = new LinkedHashSet<>();
+        Object rawMethodName = arguments.get("methodName");
+        if (rawMethodName instanceof String s && !s.isBlank()) {
+            for (String m : s.split(",")) {
+                String trimmed = m.trim();
+                if (!trimmed.isEmpty()) {
+                    requestedMethods.add(trimmed);
+                }
+            }
+        }
+        Object rawMethodNames = arguments.get("methodNames");
+        if (rawMethodNames instanceof String s && !s.isBlank()) {
+            for (String m : s.split(",")) {
+                String trimmed = m.trim();
+                if (!trimmed.isEmpty()) {
+                    requestedMethods.add(trimmed);
+                }
+            }
+        } else if (rawMethodNames instanceof Collection<?> col) {
+            for (Object item : col) {
+                if (item != null) {
+                    for (String m : item.toString().split(",")) {
+                        String trimmed = m.trim();
+                        if (!trimmed.isEmpty()) {
+                            requestedMethods.add(trimmed);
+                        }
+                    }
+                }
+            }
+        }
+
+        if (classQuery == null || classQuery.isBlank() || requestedMethods.isEmpty()) {
             return McpJsonRpcResponse.error(requestId, -32602, "Missing required argument: classQuery and methodName are required");
         }
+
+        String combinedMethodNames = String.join(",", requestedMethods);
 
         String sourceRootOverride = extractString(arguments, "sourceRoot");
         Path root = resolveSourceRoot(sourceRootOverride);
 
-        List<MethodBodySliceDto> slices = sliceExpander.expandMethodBody(root, classQuery, methodName);
+        List<MethodBodySliceDto> slices = sliceExpander.expandMethodBody(root, classQuery, combinedMethodNames);
         if (slices.isEmpty()) {
-            return McpJsonRpcResponse.error(requestId, -32602, "Method '" + methodName + "' not found in class matching: " + classQuery);
+            return McpJsonRpcResponse.error(requestId, -32602, "Method '" + combinedMethodNames + "' not found in class matching: " + classQuery);
         }
 
         String formattedText = slices.stream()
@@ -295,6 +385,20 @@ public class McpCompactorDispatcher {
                 return Integer.parseInt(s.trim());
             } catch (NumberFormatException ignored) {
             }
+        }
+        return defaultValue;
+    }
+
+    private boolean extractBoolean(Map<String, Object> map, String key, boolean defaultValue) {
+        if (map == null || !map.containsKey(key)) {
+            return defaultValue;
+        }
+        Object val = map.get(key);
+        if (val instanceof Boolean b) {
+            return b;
+        }
+        if (val instanceof String s && !s.isBlank()) {
+            return Boolean.parseBoolean(s.trim());
         }
         return defaultValue;
     }
