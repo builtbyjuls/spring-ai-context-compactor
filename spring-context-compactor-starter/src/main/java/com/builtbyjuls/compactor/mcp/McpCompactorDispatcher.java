@@ -8,6 +8,7 @@ import com.builtbyjuls.compactor.model.MethodBodySliceDto;
 import com.builtbyjuls.compactor.model.MethodTrapNoteDto;
 import com.builtbyjuls.compactor.model.ProjectCompactionBudgetDto;
 import com.builtbyjuls.compactor.model.SliceCompactionReportDto;
+import com.builtbyjuls.compactor.model.SpringStereotype;
 import com.builtbyjuls.compactor.service.CompactionBudgetService;
 import com.builtbyjuls.compactor.service.SpringSliceExpander;
 import com.fasterxml.jackson.core.JsonProcessingException;
@@ -244,6 +245,17 @@ public class McpCompactorDispatcher {
                 }
             }
         }
+
+        if (matchedFile.stereotype() == SpringStereotype.TEST && expandTrapped) {
+            for (CompactedMethodSummaryDto method : matchedFile.methods()) {
+                boolean hasBeforeEach = method.retainedAnnotations().stream()
+                        .anyMatch(ann -> "BeforeEach".equals(extractAnnotationSimpleName(ann)));
+                if (hasBeforeEach) {
+                    methodsToExpand.add(method.methodName());
+                }
+            }
+        }
+
         methodsToExpand.addAll(explicitMethods);
 
         List<MethodBodySliceDto> autoSlices = List.of();
@@ -291,21 +303,23 @@ public class McpCompactorDispatcher {
 
         String skeleton = file.compactedSkeleton();
         for (CompactedMethodSummaryDto omitted : omittedMethods) {
-            String block = buildMethodCompactedBlock(omitted);
+            String block = buildMethodCompactedBlock(omitted, file.stereotype());
             if (skeleton.contains("\n" + block)) {
                 skeleton = skeleton.replace("\n" + block, "");
             } else if (skeleton.contains(block)) {
                 skeleton = skeleton.replace(block, "");
             } else {
-                int sigIdx = skeleton.indexOf("    " + omitted.signature());
+                int sigIdx = skeleton.indexOf(omitted.signature());
                 if (sigIdx >= 0) {
+                    int lineStart = skeleton.lastIndexOf('\n', sigIdx);
+                    lineStart = lineStart < 0 ? 0 : lineStart + 1;
                     int endIdx = skeleton.indexOf("\n", sigIdx);
                     if (endIdx < 0) {
                         endIdx = skeleton.length();
                     } else {
                         endIdx++;
                     }
-                    int startIdx = sigIdx;
+                    int startIdx = lineStart;
                     for (int i = 0; i < omitted.retainedAnnotations().size(); i++) {
                         int prevLineEnd = startIdx - 1;
                         if (prevLineEnd >= 0 && skeleton.charAt(prevLineEnd) == '\n') {
@@ -356,7 +370,55 @@ public class McpCompactorDispatcher {
         return skeleton;
     }
 
-    private String buildMethodCompactedBlock(CompactedMethodSummaryDto method) {
+    private boolean isSingleLineTestMethod(CompactedMethodSummaryDto method, SpringStereotype stereotype) {
+        if (stereotype != SpringStereotype.TEST || method.omittedLineCount() == 0) {
+            return false;
+        }
+        for (String ann : method.retainedAnnotations()) {
+            String simple = extractAnnotationSimpleName(ann);
+            if ("Test".equals(simple) || "ParameterizedTest".equals(simple) || "RepeatedTest".equals(simple)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private String extractAnnotationSimpleName(String annotationStr) {
+        String s = annotationStr.trim();
+        if (s.startsWith("@")) {
+            s = s.substring(1);
+        }
+        int paren = s.indexOf('(');
+        if (paren >= 0) {
+            s = s.substring(0, paren).trim();
+        }
+        int dot = s.lastIndexOf('.');
+        return dot >= 0 ? s.substring(dot + 1) : s;
+    }
+
+    private String buildMethodCompactedBlock(CompactedMethodSummaryDto method, SpringStereotype stereotype) {
+        if (isSingleLineTestMethod(method, stereotype)) {
+            StringBuilder sb = new StringBuilder();
+            sb.append("    ");
+            for (String ann : method.retainedAnnotations()) {
+                sb.append(ann).append(" ");
+            }
+            sb.append(method.signature());
+            if (properties.isIncludeLineNumbers()) {
+                sb.append(" /* L").append(method.startLine()).append("-L").append(method.endLine())
+                        .append(": body omitted (").append(method.omittedLineCount()).append(" lines)");
+            } else {
+                sb.append(" /* body omitted (").append(method.omittedLineCount()).append(" lines)");
+            }
+            if (method.trapNotes() != null && !method.trapNotes().isEmpty()) {
+                for (MethodTrapNoteDto trap : method.trapNotes()) {
+                    sb.append(" | [TRAP: ").append(trap.trapType().name()).append("] ").append(trap.summary());
+                }
+            }
+            sb.append(" */ ;\n");
+            return sb.toString();
+        }
+
         StringBuilder sb = new StringBuilder();
         for (String ann : method.retainedAnnotations()) {
             sb.append("    ").append(ann).append("\n");
@@ -366,9 +428,21 @@ public class McpCompactorDispatcher {
             sb.append(";\n");
         } else if (properties.isIncludeLineNumbers()) {
             sb.append(" /* L").append(method.startLine()).append("-L").append(method.endLine())
-                    .append(": body omitted (").append(method.omittedLineCount()).append(" lines) */ ;\n");
+                    .append(": body omitted (").append(method.omittedLineCount()).append(" lines)");
+            if (method.trapNotes() != null && !method.trapNotes().isEmpty()) {
+                for (MethodTrapNoteDto trap : method.trapNotes()) {
+                    sb.append(" | [TRAP: ").append(trap.trapType().name()).append("] ").append(trap.summary());
+                }
+            }
+            sb.append(" */ ;\n");
         } else {
-            sb.append(" /* body omitted (").append(method.omittedLineCount()).append(" lines) */ ;\n");
+            sb.append(" /* body omitted (").append(method.omittedLineCount()).append(" lines)");
+            if (method.trapNotes() != null && !method.trapNotes().isEmpty()) {
+                for (MethodTrapNoteDto trap : method.trapNotes()) {
+                    sb.append(" | [TRAP: ").append(trap.trapType().name()).append("] ").append(trap.summary());
+                }
+            }
+            sb.append(" */ ;\n");
         }
         return sb.toString();
     }

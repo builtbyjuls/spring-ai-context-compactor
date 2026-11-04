@@ -7,5 +7,6 @@ public enum SpringStereotype {
     REPOSITORY,
     CONFIGURATION,
     MESSAGING_LISTENER,
+    TEST,
     COMPONENT
 }

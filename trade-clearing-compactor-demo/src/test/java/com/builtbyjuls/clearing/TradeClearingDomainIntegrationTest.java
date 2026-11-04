@@ -314,8 +314,16 @@ class TradeClearingDomainIntegrationTest extends ClearingTestContainersBase {
                 .collect(Collectors.toSet());
 
         assertThat(detectedStereotypes)
-                .as("All 7 Spring stereotypes must be present in demo")
-                .containsExactlyInAnyOrder(SpringStereotype.values());
+                .as("All 7 production Spring stereotypes must be present in demo")
+                .contains(
+                        SpringStereotype.CONTROLLER,
+                        SpringStereotype.SERVICE,
+                        SpringStereotype.ENTITY,
+                        SpringStereotype.REPOSITORY,
+                        SpringStereotype.CONFIGURATION,
+                        SpringStereotype.MESSAGING_LISTENER,
+                        SpringStereotype.COMPONENT
+                );
 
         List<MethodTrapNoteDto> serviceTraps = budget.detectedTraps().stream()
                 .filter(t -> "TradeClearingService.java".equals(t.callerMethod())

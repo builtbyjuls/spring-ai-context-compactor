@@ -119,6 +119,38 @@ class StereotypeClassifierTest {
     }
 
     @Test
+    @DisplayName("Classifies test annotations and classes with test methods as TEST")
+    void classifiesTestClassesAndMethods() {
+        TypeDeclaration<?> springBootTest = parseFirstType(
+                "@SpringBootTest public class TradeClearingApplicationTests {}"
+        );
+        TypeDeclaration<?> webMvcTest = parseFirstType(
+                "@WebMvcTest(TradeController.class) public class TradeControllerTests {}"
+        );
+        TypeDeclaration<?> dataJpaTest = parseFirstType(
+                "@DataJpaTest public class TradeRepositoryTests {}"
+        );
+        TypeDeclaration<?> testMethodsOnly = parseFirstType("""
+                public class PortfolioSimmMarginCalculatorTests {
+                    @Test
+                    void calculatesMarginSuccessfully() {}
+                }
+                """);
+        TypeDeclaration<?> parameterizedOnly = parseFirstType("""
+                public class SpanMarginCalculatorTests {
+                    @ParameterizedTest
+                    void calculatesWithParameters(int param) {}
+                }
+                """);
+
+        assertThat(classifier.classify(springBootTest)).isEqualTo(SpringStereotype.TEST);
+        assertThat(classifier.classify(webMvcTest)).isEqualTo(SpringStereotype.TEST);
+        assertThat(classifier.classify(dataJpaTest)).isEqualTo(SpringStereotype.TEST);
+        assertThat(classifier.classify(testMethodsOnly)).isEqualTo(SpringStereotype.TEST);
+        assertThat(classifier.classify(parameterizedOnly)).isEqualTo(SpringStereotype.TEST);
+    }
+
+    @Test
     @DisplayName("Falls back to COMPONENT for generic components and plain classes")
     void fallsBackToComponent() {
         TypeDeclaration<?> component = parseFirstType(

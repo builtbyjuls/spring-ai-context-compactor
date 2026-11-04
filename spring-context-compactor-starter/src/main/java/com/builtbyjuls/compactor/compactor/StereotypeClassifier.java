@@ -33,6 +33,16 @@ public class StereotypeClassifier {
             "RabbitListener", "KafkaListener", "JmsListener"
     );
 
+    private static final Set<String> TEST_CLASS_ANNOTATIONS = Set.of(
+            "SpringBootTest", "WebMvcTest", "DataJpaTest", "JdbcTest",
+            "RestClientTest", "JsonTest", "GraphQlTest", "AutoConfigureMockMvc",
+            "ExtendWith", "ContextConfiguration"
+    );
+
+    private static final Set<String> TEST_METHOD_ANNOTATIONS = Set.of(
+            "Test", "ParameterizedTest", "RepeatedTest"
+    );
+
     public SpringStereotype classify(TypeDeclaration<?> typeDeclaration) {
         if (typeDeclaration == null) {
             return SpringStereotype.COMPONENT;
@@ -62,7 +72,20 @@ public class StereotypeClassifier {
             return SpringStereotype.SERVICE;
         }
 
+        if (hasAnyAnnotation(typeDeclaration, TEST_CLASS_ANNOTATIONS) || hasTestMethods(typeDeclaration)) {
+            return SpringStereotype.TEST;
+        }
+
         return SpringStereotype.COMPONENT;
+    }
+
+    private boolean hasTestMethods(TypeDeclaration<?> typeDeclaration) {
+        for (MethodDeclaration method : typeDeclaration.getMethods()) {
+            if (hasAnyAnnotation(method, TEST_METHOD_ANNOTATIONS)) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private boolean hasAnyAnnotation(NodeWithAnnotations<?> node, Set<String> simpleNames) {

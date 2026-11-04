@@ -671,4 +671,77 @@ class SpringSliceExpanderTest {
         assertThat(mutualSlices.stream().map(MethodBodySliceDto::methodName).toList())
                 .containsExactly("ping", "pong");
     }
+
+    @Test
+    @DisplayName("Resolves and compacts sibling src/test/java when sourceRoot points to src/main/java")
+    void resolvesAndCompactsSiblingTestRootWhenSourceRootIsMainJava(@TempDir Path root) throws IOException {
+        Path mainJava = root.resolve("src/main/java/com/builtbyjuls/clearing/trade");
+        Path testJava = root.resolve("src/test/java/com/builtbyjuls/clearing/trade");
+        Path targetDir = root.resolve("target/classes");
+        Files.createDirectories(mainJava);
+        Files.createDirectories(testJava);
+        Files.createDirectories(targetDir);
+
+        String serviceSource = """
+                package com.builtbyjuls.clearing.trade;
+                import org.springframework.stereotype.Service;
+                @Service
+                public class TradeClearingService {
+                    public void clearTrade(String ref) {}
+                }
+                """;
+        Files.writeString(mainJava.resolve("TradeClearingService.java"), serviceSource);
+
+        String testSource = """
+                package com.builtbyjuls.clearing.trade;
+                import org.junit.jupiter.api.BeforeEach;
+                import org.junit.jupiter.api.Test;
+                import org.springframework.boot.test.context.SpringBootTest;
+
+                @SpringBootTest
+                public class TradeClearingServiceTests {
+                    @BeforeEach
+                    void setUp() {}
+
+                    @Test
+                    void testClearTradeSuccess() {
+                        helperCheck();
+                    }
+
+                    private void helperCheck() {}
+                }
+                """;
+        Files.writeString(testJava.resolve("TradeClearingServiceTests.java"), testSource);
+
+        // Put a file in target/ that should be ignored when walking
+        Files.writeString(targetDir.resolve("IgnoredClass.java"), "public class IgnoredClass {}");
+
+        Path mainRoot = root.resolve("src/main/java");
+
+        // 1. compactSlice with sourceRoot = src/main/java finds test in sibling src/test/java
+        SliceCompactionReportDto sliceReport = sliceExpander.compactSlice(mainRoot, "TradeClearingServiceTests");
+        assertThat(sliceReport.totalFilesCompacted()).isEqualTo(1);
+        assertThat(sliceReport.files().get(0).className()).isEqualTo("TradeClearingServiceTests");
+        assertThat(sliceReport.files().get(0).stereotype()).isEqualTo(com.builtbyjuls.compactor.model.SpringStereotype.TEST);
+
+        // 2. expandMethodBody with sourceRoot = src/main/java
+        List<MethodBodySliceDto> singleSlices = sliceExpander.expandMethodBody(
+                mainRoot,
+                "TradeClearingServiceTests",
+                "testClearTradeSuccess"
+        );
+        assertThat(singleSlices).hasSize(1);
+        assertThat(singleSlices.get(0).methodName()).isEqualTo("testClearTradeSuccess");
+        assertThat(singleSlices.get(0).filePath()).isEqualTo("com/builtbyjuls/clearing/trade/TradeClearingServiceTests.java");
+
+        // 3. expandMethodBodiesWithCallees with sourceRoot = src/main/java
+        List<MethodBodySliceDto> calleeSlices = sliceExpander.expandMethodBodiesWithCallees(
+                mainRoot,
+                "TradeClearingServiceTests",
+                List.of("testClearTrade*")
+        );
+        assertThat(calleeSlices.stream().map(MethodBodySliceDto::methodName).toList())
+                .containsExactly("testClearTradeSuccess", "helperCheck");
+        assertThat(calleeSlices.get(0).filePath()).isEqualTo("com/builtbyjuls/clearing/trade/TradeClearingServiceTests.java");
+    }
 }

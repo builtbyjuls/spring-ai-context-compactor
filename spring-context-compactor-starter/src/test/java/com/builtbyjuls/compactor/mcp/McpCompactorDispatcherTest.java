@@ -678,4 +678,80 @@ class McpCompactorDispatcherTest {
         assertThat(text).contains("public void queryTwo()");
         assertThat(text).doesNotContain("// Other Methods");
     }
+
+    @Test
+    @DisplayName("compact_spring_file automatically resolves sibling src/test/java and auto-expands @BeforeEach setup with wildcard @Test methods")
+    void compactSpringFileAutoExpandsBeforeEachAndWildcardTestInSiblingTestRoot() throws IOException {
+        Path multiRoot = tempDir.resolve("multi-root-proj");
+        Path mainJava = multiRoot.resolve("src/main/java/com/builtbyjuls/clearing/trade");
+        Path testJava = multiRoot.resolve("src/test/java/com/builtbyjuls/clearing/trade");
+        Files.createDirectories(mainJava);
+        Files.createDirectories(testJava);
+
+        String controllerSource = """
+                package com.builtbyjuls.clearing.trade;
+                import org.springframework.web.bind.annotation.RestController;
+                @RestController
+                public class SampleController {}
+                """;
+        Files.writeString(mainJava.resolve("SampleController.java"), controllerSource);
+
+        String testSource = """
+                package com.builtbyjuls.clearing.trade;
+
+                import org.junit.jupiter.api.BeforeEach;
+                import org.junit.jupiter.api.Test;
+                import org.springframework.boot.test.autoconfigure.web.servlet.WebMvcTest;
+
+                @WebMvcTest(SampleController.class)
+                public class SampleControllerTests {
+
+                    @BeforeEach
+                    void initOwners() {
+                        System.out.println("init fixture");
+                    }
+
+                    @Test
+                    void testCreateVisitSuccess() throws Exception {
+                        System.out.println("create visit");
+                    }
+
+                    @Test
+                    void testListVisitsSuccess() throws Exception {
+                        System.out.println("list visits");
+                    }
+                }
+                """;
+        Files.writeString(testJava.resolve("SampleControllerTests.java"), testSource);
+
+        McpJsonRpcRequest request = new McpJsonRpcRequest("2.0", 28, "tools/call", Map.of(
+                "name", "compact_spring_file",
+                "arguments", Map.of(
+                        "query", "SampleControllerTests",
+                        "expandMethods", "*CreateVisit*",
+                        "sourceRoot", multiRoot.resolve("src/main/java").toString()
+                )
+        ));
+
+        McpJsonRpcResponse response = dispatcher.dispatch(request);
+        assertThat(response).isNotNull();
+        assertThat(response.error()).isNull();
+
+        @SuppressWarnings("unchecked")
+        Map<String, Object> result = (Map<String, Object>) response.result();
+        @SuppressWarnings("unchecked")
+        List<Map<String, Object>> content = (List<Map<String, Object>>) result.get("content");
+        String text = (String) content.get(0).get("text");
+
+        CompactedFileResultDto structured = (CompactedFileResultDto) result.get("structuredContent");
+        assertThat(structured.stereotype()).isEqualTo(com.builtbyjuls.compactor.model.SpringStereotype.TEST);
+
+        assertThat(text).contains("// [AUTO-EXPANDED METHOD SLICES]");
+        assertThat(text).contains("void initOwners()");
+        assertThat(text).contains("void testCreateVisitSuccess()");
+        // testListVisitsSuccess is collapsed into Other Methods index, not present as method in skeleton or slices
+        assertThat(text).doesNotContain("testListVisitsSuccess() throws Exception");
+        assertThat(text).contains("// Other Methods (1 omitted): testListVisitsSuccess(L");
+        assertThat(text).doesNotContain("// [METHOD SLICE: SampleControllerTests#testListVisitsSuccess]");
+    }
 }

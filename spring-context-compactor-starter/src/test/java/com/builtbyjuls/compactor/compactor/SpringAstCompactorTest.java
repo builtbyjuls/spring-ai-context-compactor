@@ -712,4 +712,68 @@ class SpringAstCompactorTest {
         assertThat(entityResult.methods()).extracting(CompactedMethodSummaryDto::methodName)
                 .doesNotContain("internalEntityHelper");
     }
+
+    @Test
+    @DisplayName("Compacts @WebMvcTest class retaining mocks and fixture fields while formatting @Test methods on a single line")
+    void compactsTestClassWithFixtureFieldsAndSingleLineTestMethods() {
+        String testSource = """
+                package com.builtbyjuls.clearing.trade;
+
+                import org.junit.jupiter.api.BeforeEach;
+                import org.junit.jupiter.api.Test;
+                import org.springframework.beans.factory.annotation.Autowired;
+                import org.springframework.boot.test.autoconfigure.web.servlet.WebMvcTest;
+                import org.springframework.test.context.bean.override.mockito.MockitoBean;
+                import org.springframework.test.web.servlet.MockMvc;
+                import java.util.List;
+                import java.util.ArrayList;
+
+                @WebMvcTest(TradeController.class)
+                public class TradeControllerTests {
+
+                    @Autowired
+                    private MockMvc mockMvc;
+
+                    @MockitoBean
+                    private TradeClearingService clearingService;
+
+                    private List<String> sampleTrades;
+
+                    @BeforeEach
+                    void setUp() {
+                        sampleTrades = new ArrayList<>();
+                        sampleTrades.add("TRD-001");
+                    }
+
+                    @Test
+                    void testGetTradesSuccess() throws Exception {
+                        mockMvc.perform(get("/api/v1/trades"))
+                               .andExpect(status().isOk());
+                    }
+
+                    @Test
+                    void testCreateTradeSuccess() throws Exception {
+                        mockMvc.perform(post("/api/v1/trades"))
+                               .andExpect(status().isCreated());
+                    }
+                }
+                """;
+
+        CompactedFileResultDto result = compactor.compactSource("TradeControllerTests.java", testSource);
+        String skeleton = result.compactedSkeleton();
+
+        assertThat(result.stereotype()).isEqualTo(SpringStereotype.TEST);
+        assertThat(result.injectedDependencies()).contains("MockMvc", "TradeClearingService");
+        assertThat(result.injectedDependencies()).doesNotContain("List", "String");
+
+        assertThat(skeleton).contains("private MockMvc mockMvc;");
+        assertThat(skeleton).contains("private TradeClearingService clearingService;");
+        assertThat(skeleton).contains("private List<String> sampleTrades;");
+
+        assertThat(skeleton).contains("    @BeforeEach\n    void setUp()");
+
+        assertThat(skeleton).contains("    @Test void testGetTradesSuccess() throws Exception /* L");
+        assertThat(skeleton).contains("    @Test void testCreateTradeSuccess() throws Exception /* L");
+        assertThat(skeleton).contains("body omitted");
+    }
 }

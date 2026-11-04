@@ -32,6 +32,7 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.Queue;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
@@ -76,13 +77,25 @@ public class SpringSliceExpander {
 
         Path normalizedRoot = sourceRoot.toAbsolutePath().normalize();
         List<Path> matchedFiles = findSliceFiles(normalizedRoot, query);
+        Path activeRoot = normalizedRoot;
+
+        if (matchedFiles.isEmpty() && !query.isBlank()) {
+            Optional<Path> siblingTestRoot = resolveSiblingTestRoot(normalizedRoot);
+            if (siblingTestRoot.isPresent()) {
+                List<Path> siblingFiles = findSliceFiles(siblingTestRoot.get(), query);
+                if (!siblingFiles.isEmpty()) {
+                    matchedFiles = siblingFiles;
+                    activeRoot = siblingTestRoot.get();
+                }
+            }
+        }
 
         List<CompactedFileResultDto> files = new ArrayList<>();
         boolean tokenBudgetExceeded = false;
         int currentCompactedTokens = 0;
 
         for (Path file : matchedFiles) {
-            CompactedFileResultDto compacted = astCompactor.compactFile(sourceRoot, file);
+            CompactedFileResultDto compacted = astCompactor.compactFile(activeRoot, file);
             int fileTokens = compacted.compactedEstimatedTokens();
 
             if (maxTokenBudget > 0) {
@@ -238,9 +251,13 @@ public class SpringSliceExpander {
                 }
             }
 
+            Path effectiveRoot = file.startsWith(normalizedRoot)
+                    ? normalizedRoot
+                    : resolveSiblingTestRoot(normalizedRoot).filter(file::startsWith).orElse(normalizedRoot);
+
             for (MethodDeclaration method : primaryType.getMethods()) {
                 if (visited.contains(method)) {
-                    results.add(buildMethodSlice(method, originalLines, className, file, normalizedRoot, allTraps));
+                    results.add(buildMethodSlice(method, originalLines, className, file, effectiveRoot, allTraps));
                 }
             }
         }
@@ -300,9 +317,13 @@ public class SpringSliceExpander {
                 allTraps = trapScanner.scan(cid);
             }
 
+            Path effectiveRoot = file.startsWith(normalizedRoot)
+                    ? normalizedRoot
+                    : resolveSiblingTestRoot(normalizedRoot).filter(file::startsWith).orElse(normalizedRoot);
+
             for (MethodDeclaration method : primaryType.getMethods()) {
                 if (matchesAnyMethodPattern(method.getNameAsString(), targetMethods)) {
-                    results.add(buildMethodSlice(method, originalLines, className, file, normalizedRoot, allTraps));
+                    results.add(buildMethodSlice(method, originalLines, className, file, effectiveRoot, allTraps));
                 }
             }
         }
@@ -315,7 +336,7 @@ public class SpringSliceExpander {
             List<String> originalLines,
             String className,
             Path file,
-            Path normalizedRoot,
+            Path effectiveRoot,
             List<MethodTrapNoteDto> allTraps
     ) {
         int startLine = method.getBegin().map(p -> p.line).orElse(1);
@@ -341,7 +362,7 @@ public class SpringSliceExpander {
 
         String signature = SpringAstCompactor.buildMethodSignature(method);
         List<MethodTrapNoteDto> methodTraps = SpringAstCompactor.findTrapsForMethod(method, allTraps);
-        String relPath = normalizedRoot.relativize(file.toAbsolutePath().normalize()).toString().replace('\\', '/');
+        String relPath = effectiveRoot.relativize(file.toAbsolutePath().normalize()).toString().replace('\\', '/');
 
         return new MethodBodySliceDto(
                 relPath,
@@ -469,13 +490,27 @@ public class SpringSliceExpander {
             }
         }
 
-        return fallbackMatches;
+        if (!fallbackMatches.isEmpty()) {
+            return fallbackMatches;
+        }
+
+        Optional<Path> siblingTestRoot = resolveSiblingTestRoot(normalizedRoot);
+        if (siblingTestRoot.isPresent()) {
+            return locateMatchingFiles(siblingTestRoot.get(), query);
+        }
+
+        return List.of();
     }
 
     private List<Path> walkJavaFiles(Path normalizedRoot) {
         try (var stream = Files.walk(normalizedRoot)) {
             return stream
                     .filter(Files::isRegularFile)
+                    .filter(p -> {
+                        String relPath = normalizedRoot.relativize(p).toString().replace('\\', '/');
+                        return !relPath.startsWith("target/") && !relPath.contains("/target/")
+                                && !relPath.startsWith(".git/") && !relPath.contains("/.git/");
+                    })
                     .filter(p -> p.getFileName().toString().endsWith(".java"))
                     .filter(p -> !p.getFileName().toString().equals("package-info.java"))
                     .filter(p -> !p.getFileName().toString().equals("module-info.java"))
@@ -488,5 +523,21 @@ public class SpringSliceExpander {
         } catch (IOException e) {
             throw new UncheckedIOException("Failed to walk sourceRoot: " + normalizedRoot, e);
         }
+    }
+
+    private Optional<Path> resolveSiblingTestRoot(Path normalizedRoot) {
+        if (normalizedRoot != null && normalizedRoot.endsWith(Path.of("src", "main", "java"))) {
+            Path main = normalizedRoot.getParent();
+            if (main != null) {
+                Path src = main.getParent();
+                if (src != null) {
+                    Path testJava = src.resolve(Path.of("test", "java"));
+                    if (Files.isDirectory(testJava)) {
+                        return Optional.of(testJava.normalize());
+                    }
+                }
+            }
+        }
+        return Optional.empty();
     }
 }

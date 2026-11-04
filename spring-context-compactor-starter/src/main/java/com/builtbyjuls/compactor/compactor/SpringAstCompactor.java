@@ -53,6 +53,10 @@ public class SpringAstCompactor {
             "PostConstruct"
     );
 
+    private static final Set<String> TEST_INJECTED_ANNOTATIONS = Set.of(
+            "Autowired", "Value", "MockBean", "MockitoBean", "SpyBean", "MockitoSpyBean", "Mock", "InjectMocks"
+    );
+
     private final StereotypeClassifier classifier;
     private final SpringProxyTrapScanner trapScanner;
     private final CompactorProperties properties;
@@ -186,6 +190,11 @@ public class SpringAstCompactor {
         List<String> dependencies = new ArrayList<>();
         for (FieldDeclaration field : typeDeclaration.getFields()) {
             if (shouldRetainField(field, stereotype)) {
+                if (stereotype == SpringStereotype.TEST) {
+                    if (!(field.isPrivate() && field.isFinal()) && !hasAnyAnnotation(field, TEST_INJECTED_ANNOTATIONS)) {
+                        continue;
+                    }
+                }
                 String typeName = field.getElementType().asString();
                 if (!dependencies.contains(typeName)) {
                     dependencies.add(typeName);
@@ -199,7 +208,7 @@ public class SpringAstCompactor {
         if (field.isStatic()) {
             return false;
         }
-        if (stereotype == SpringStereotype.ENTITY) {
+        if (stereotype == SpringStereotype.ENTITY || stereotype == SpringStereotype.TEST) {
             return true;
         }
         if (field.isPrivate() && field.isFinal()) {
@@ -454,6 +463,33 @@ public class SpringAstCompactor {
             SpringStereotype stereotype
     ) {
         StringBuilder sb = new StringBuilder();
+
+        if (stereotype == SpringStereotype.TEST
+                && hasAnnotation(method, "Test", "ParameterizedTest", "RepeatedTest")
+                && method.getBody().isPresent()) {
+            sb.append("    ");
+            for (AnnotationExpr annotation : method.getAnnotations()) {
+                if ("Override".equals(extractSimpleName(annotation.getNameAsString()))) {
+                    continue;
+                }
+                sb.append(annotation.toString()).append(" ");
+            }
+            sb.append(signature);
+            if (properties.isIncludeLineNumbers()) {
+                sb.append(" /* L").append(startLine).append("-L").append(endLine)
+                        .append(": body omitted (").append(omittedLines).append(" lines)");
+            } else {
+                sb.append(" /* body omitted (").append(omittedLines).append(" lines)");
+            }
+            if (!methodTraps.isEmpty()) {
+                for (MethodTrapNoteDto trap : methodTraps) {
+                    sb.append(" | [TRAP: ").append(trap.trapType().name()).append("] ").append(trap.summary());
+                }
+            }
+            sb.append(" */ ;\n");
+            return sb.toString();
+        }
+
         for (AnnotationExpr annotation : method.getAnnotations()) {
             if ("Override".equals(extractSimpleName(annotation.getNameAsString()))) {
                 continue;
