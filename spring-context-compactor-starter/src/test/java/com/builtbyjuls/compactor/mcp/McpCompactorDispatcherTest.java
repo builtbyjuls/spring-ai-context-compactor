@@ -754,4 +754,59 @@ class McpCompactorDispatcherTest {
         assertThat(text).contains("// Other Methods (1 omitted): testListVisitsSuccess(L");
         assertThat(text).doesNotContain("// [METHOD SLICE: SampleControllerTests#testListVisitsSuccess]");
     }
+
+    @Test
+    @DisplayName("compact_spring_file skips auto-expanding large >25-line @BeforeEach when explicit expandMethods is passed")
+    void compactSpringFileSkipsLargeBeforeEachWhenExplicitExpandMethodsPassed() throws IOException {
+        Path testPkg = tempDir.resolve("com/builtbyjuls/clearing/trade");
+        Files.createDirectories(testPkg);
+
+        StringBuilder largeSetup = new StringBuilder();
+        for (int i = 1; i <= 30; i++) {
+            largeSetup.append("        System.out.println(\"fixture line ").append(i).append("\");\n");
+        }
+
+        String testSource = """
+                package com.builtbyjuls.clearing.trade;
+
+                import org.junit.jupiter.api.BeforeEach;
+                import org.junit.jupiter.api.Test;
+                import org.springframework.boot.test.context.SpringBootTest;
+
+                @SpringBootTest
+                public class LargeFixtureTests {
+
+                    @BeforeEach
+                    void hugeSetUp() {
+                %s    }
+
+                    @Test
+                    void testTargetCase() {
+                        System.out.println("target assertion");
+                    }
+                }
+                """.formatted(largeSetup.toString());
+        Files.writeString(testPkg.resolve("LargeFixtureTests.java"), testSource);
+
+        McpJsonRpcRequest request = new McpJsonRpcRequest("2.0", 29, "tools/call", Map.of(
+                "name", "compact_spring_file",
+                "arguments", Map.of(
+                        "query", "LargeFixtureTests",
+                        "expandMethods", "testTargetCase",
+                        "sourceRoot", tempDir.toString()
+                )
+        ));
+
+        McpJsonRpcResponse response = dispatcher.dispatch(request);
+        assertThat(response.error()).isNull();
+
+        @SuppressWarnings("unchecked")
+        Map<String, Object> result = (Map<String, Object>) response.result();
+        @SuppressWarnings("unchecked")
+        List<Map<String, Object>> content = (List<Map<String, Object>>) result.get("content");
+        String text = (String) content.get(0).get("text");
+
+        assertThat(text).contains("LargeFixtureTests#testTargetCase");
+        assertThat(text).doesNotContain("LargeFixtureTests#hugeSetUp");
+    }
 }

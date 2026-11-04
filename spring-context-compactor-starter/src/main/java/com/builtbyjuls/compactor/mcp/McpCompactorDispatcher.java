@@ -27,6 +27,9 @@ import java.util.stream.Collectors;
 
 public class McpCompactorDispatcher {
 
+    private static final int MAX_INLINE_BEFORE_EACH_LINES = 25;
+    private static final int MAX_INLINE_MCP_RESPONSE_CHARS = 9500;
+
     private final SpringAstCompactor astCompactor;
     private final SpringSliceExpander sliceExpander;
     private final CompactionBudgetService budgetService;
@@ -250,7 +253,7 @@ public class McpCompactorDispatcher {
             for (CompactedMethodSummaryDto method : matchedFile.methods()) {
                 boolean hasBeforeEach = method.retainedAnnotations().stream()
                         .anyMatch(ann -> "BeforeEach".equals(extractAnnotationSimpleName(ann)));
-                if (hasBeforeEach) {
+                if (hasBeforeEach && (method.omittedLineCount() <= MAX_INLINE_BEFORE_EACH_LINES || !hasExplicitExpandMethods)) {
                     methodsToExpand.add(method.methodName());
                 }
             }
@@ -270,10 +273,27 @@ public class McpCompactorDispatcher {
         }
 
         if (!autoSlices.isEmpty()) {
-            String formattedSlices = autoSlices.stream()
-                    .map(this::formatRawMethodSlice)
-                    .collect(Collectors.joining("\n\n"));
-            responseText = responseText.stripTrailing() + "\n\n// [AUTO-EXPANDED METHOD SLICES] (Exact raw source lines ready for edit_file Target)\n" + formattedSlices;
+            String header = "\n\n// [AUTO-EXPANDED METHOD SLICES] (Exact raw source lines ready for edit_file Target)\n";
+            StringBuilder slicesBuilder = new StringBuilder();
+            int includedCount = 0;
+            int baseLength = responseText.stripTrailing().length() + header.length();
+
+            for (MethodBodySliceDto slice : autoSlices) {
+                String formatted = formatRawMethodSlice(slice);
+                int separatorLen = includedCount > 0 ? 2 : 0;
+                if (includedCount > 0 && baseLength + slicesBuilder.length() + separatorLen + formatted.length() > MAX_INLINE_MCP_RESPONSE_CHARS) {
+                    int remaining = autoSlices.size() - includedCount;
+                    slicesBuilder.append("\n\n// [").append(remaining)
+                            .append(" additional matched method slice(s) omitted to stay within inline tool limit; call read_spring_method_body for specific methods]");
+                    break;
+                }
+                if (includedCount > 0) {
+                    slicesBuilder.append("\n\n");
+                }
+                slicesBuilder.append(formatted);
+                includedCount++;
+            }
+            responseText = responseText.stripTrailing() + header + slicesBuilder;
         }
 
         return McpJsonRpcResponse.success(requestId, Map.of(
