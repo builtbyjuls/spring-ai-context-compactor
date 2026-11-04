@@ -12,6 +12,8 @@ public class CompactorProperties {
     private boolean mcpEndpointEnabled = true;
     private int advisorOrder = 0;
     private String reportOutputDir = "target/compactor-reports";
+    private boolean failOnProxyTraps = false;
+    private boolean logConsoleSummary = true;
 
     public boolean isEnabled() {
         return enabled;
@@ -67,5 +69,21 @@ public class CompactorProperties {
 
     public void setReportOutputDir(String reportOutputDir) {
         this.reportOutputDir = reportOutputDir;
+    }
+
+    public boolean isFailOnProxyTraps() {
+        return failOnProxyTraps;
+    }
+
+    public void setFailOnProxyTraps(boolean failOnProxyTraps) {
+        this.failOnProxyTraps = failOnProxyTraps;
+    }
+
+    public boolean isLogConsoleSummary() {
+        return logConsoleSummary;
+    }
+
+    public void setLogConsoleSummary(boolean logConsoleSummary) {
+        this.logConsoleSummary = logConsoleSummary;
     }
 }

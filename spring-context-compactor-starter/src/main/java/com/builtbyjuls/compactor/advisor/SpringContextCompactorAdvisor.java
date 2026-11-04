@@ -71,6 +71,29 @@ public class SpringContextCompactorAdvisor implements CallAdvisor {
         recordedStats.clear();
     }
 
+    public String compactPromptText(String promptText) {
+        return transformMessageText(promptText).text();
+    }
+
+    public AdvisorCompactionStatsDto inspectCompactionStats(String promptText) {
+        String original = promptText != null ? promptText : "";
+        CompactionTransformationResult transformed = transformMessageText(original);
+        int originalTokens = (int) Math.ceil(original.length() / 4.0);
+        int compactedTokens = (int) Math.ceil(transformed.text().length() / 4.0);
+        int tokensSaved = Math.max(0, originalTokens - compactedTokens);
+        double tokenReductionPercent = originalTokens > 0
+                ? ((double) tokensSaved / originalTokens) * 100.0
+                : 0.0;
+        return new AdvisorCompactionStatsDto(
+                transformed.detected(),
+                transformed.compacted(),
+                originalTokens,
+                compactedTokens,
+                tokensSaved,
+                tokenReductionPercent
+        );
+    }
+
     @Override
     public ChatClientResponse adviseCall(ChatClientRequest chatClientRequest, CallAdvisorChain callAdvisorChain) {
         Objects.requireNonNull(chatClientRequest, "chatClientRequest must not be null");

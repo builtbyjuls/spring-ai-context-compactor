@@ -1,0 +1,46 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: clearing-postgres
+    environment:
+      POSTGRES_DB: trade_clearing
+      POSTGRES_USER: clearing_user
+      POSTGRES_PASSWORD: clearing_password
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U clearing_user -d trade_clearing"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  rabbitmq:
+    image: rabbitmq:3.13-management-alpine
+    container_name: clearing-rabbitmq
+    ports:
+      - "5672:5672"
+      - "15672:15672"
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  trade-clearing-demo:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: trade-clearing-demo
+    ports:
+      - "8080:8080"
+    environment:
+      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/trade_clearing
+      SPRING_DATASOURCE_USERNAME: clearing_user
+      SPRING_DATASOURCE_PASSWORD: clearing_password
+      SPRING_RABBITMQ_HOST: rabbitmq
+      SPRING_RABBITMQ_PORT: 5672
+    depends_on:
+      postgres:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy

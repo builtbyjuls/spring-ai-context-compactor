@@ -7,6 +7,8 @@ import com.builtbyjuls.compactor.compactor.StereotypeClassifier;
 import com.builtbyjuls.compactor.mcp.CompactorMcpHttpController;
 import com.builtbyjuls.compactor.mcp.McpCompactorDispatcher;
 import com.builtbyjuls.compactor.mcp.McpStdioServer;
+import com.builtbyjuls.compactor.report.CompactorEfficiencyBenchmarkService;
+import com.builtbyjuls.compactor.report.CompactorReportExporter;
 import com.builtbyjuls.compactor.service.CompactionBudgetService;
 import com.builtbyjuls.compactor.service.SpringSliceExpander;
 import org.junit.jupiter.api.DisplayName;
@@ -35,6 +37,8 @@ class SpringContextCompactorAutoConfigurationTest {
             assertThat(context).hasSingleBean(McpCompactorDispatcher.class);
             assertThat(context).hasSingleBean(McpStdioServer.class);
             assertThat(context).hasSingleBean(CompactorMcpHttpController.class);
+            assertThat(context).hasSingleBean(CompactorEfficiencyBenchmarkService.class);
+            assertThat(context).hasSingleBean(CompactorReportExporter.class);
         });
     }
 
@@ -63,6 +67,8 @@ class SpringContextCompactorAutoConfigurationTest {
                     assertThat(context).doesNotHaveBean(McpCompactorDispatcher.class);
                     assertThat(context).doesNotHaveBean(McpStdioServer.class);
                     assertThat(context).doesNotHaveBean(CompactorMcpHttpController.class);
+                    assertThat(context).doesNotHaveBean(CompactorEfficiencyBenchmarkService.class);
+                    assertThat(context).doesNotHaveBean(CompactorReportExporter.class);
                 });
     }
 }

@@ -1,6 +1,6 @@
 # Architecture & Technical Design
 
-**Target Stack**: **Java 21**, **Spring Boot 4.1.x**, **Spring AI 2.0.x**, **JavaParser 3.28.x**, **Spring AMQP (RabbitMQ 3.13)**, **PostgreSQL 16** (Testcontainers), **JUnit 5**, **Hibernate ORM 7.x**.
+**Target Stack**: **Java 21**, **Spring Boot 4.1.0**, **Spring AI 2.0.1**, **JavaParser 3.28.0**, **Spring AMQP (RabbitMQ 3.13)**, **PostgreSQL 16** (Testcontainers), **JUnit 5**, **Hibernate ORM 7.x**.
 
 ---
 
@@ -12,28 +12,29 @@ AI coding agents (Claude Code, Cursor, Antigravity, Codex) and Spring AI RAG/cha
 
 * **Java Boilerplate Bloat**: Standard JPA entities, Spring services, and REST controllers carry hundreds of lines of getters, setters, `equals`/`hashCode`, builder patterns, import walls, and private helper method bodies that inflate prompt token usage by 3x to 6x without adding architectural signal.
 * **Spring-Blind Generic AST Skeletonizers**: Generic Tree-sitter skeletonizers strip method bodies indiscriminately or drop critical annotations, losing `@Transactional(propagation = Propagation.REQUIRES_NEW)` rules, `@Query` JPQL strings, `@Bean` wiring definitions, JPA `@JoinColumn` mappings, and intra-bean `@Transactional` self-invocation traps.
-* **Full-File Reads for Single-Method Edits**: Coding agents routinely read an entire 350-line `@Service` or `@Entity` file just to inspect dependency types and edit a single 20-line method.
+* **Full-File Reads for Single-Method Edits**: Coding agents routinely read an entire 300-line `@Entity` or `@Service` file just to inspect dependency types and edit a single 20-line method.
 
 ### 1.2 How It Works
 
-This project provides a reusable Spring Boot starter, Spring AI `CallAdvisor`, and Model Context Protocol (MCP) server (**`spring-context-compactor-starter`**) and demonstrates it on an institutional FX and derivatives trade clearing application (**`trade-clearing-compactor-demo`**).
+This project provides a reusable Spring Boot starter, Spring AI `CallAdvisor`, Model Context Protocol (MCP) server, and CI/CD benchmark report exporter (**`spring-context-compactor-starter`**) and demonstrates it on an institutional FX and derivatives trade clearing application (**`trade-clearing-compactor-demo`**).
 
-1. **Classify & Prune by Spring Stereotype**: `SpringAstCompactor` parses `.java` files with `JavaParser` (`3.28.x`), detects the Spring stereotype (`CONTROLLER`, `SERVICE`, `ENTITY`, `REPOSITORY`, `CONFIGURATION`, `MESSAGING_LISTENER`), strips non-contract boilerplate and method bodies, and preserves 100% of Spring wiring, JPA columns/relations, validation rules, and exact source line ranges (`/* L42-L88: body omitted (47 lines) */`).
-2. **Annotate Static Spring Proxy Traps Inline**: During AST compaction of `@Service` and `@Component` classes, `SpringAstCompactor` scans method bodies before stripping them and emits inline warnings whenever a method invokes another `@Transactional`, `@Async`, or `@Cacheable` method on `this` (`/* [TRAP: SELF_INVOCATION_BYPASS] calls this.recordInternalComplianceCheck() at L93 */`).
+1. **Classify & Prune by Spring Stereotype**: `SpringAstCompactor` parses `.java` files with `JavaParser` (`3.28.0`), detects the Spring stereotype (`CONTROLLER`, `SERVICE`, `ENTITY`, `REPOSITORY`, `CONFIGURATION`, `MESSAGING_LISTENER`, `COMPONENT`), strips non-contract boilerplate and method bodies, and preserves 100% of Spring wiring, JPA columns/relations, validation rules, and exact source line ranges (`/* L52-L120: body omitted (68 lines) */`).
+2. **Annotate Static Spring Proxy Traps Inline**: During AST compaction of `@Service` and `@Component` classes, `SpringProxyTrapScanner` scans method bodies before stripping them and emits inline warnings whenever a method invokes another `@Transactional` method on `this` (`SELF_INVOCATION_BYPASS`), calls a write transaction from a read-only transaction (`READ_ONLY_CALLING_WRITE_REQUIRED`), or declares `@Transactional` on a non-public method (`NON_PUBLIC_TRANSACTIONAL`).
 3. **Expand Surgical Slices & Method Bodies**: `SpringSliceExpander` compacts an entire package or feature slice in one call and extracts the exact uncompacted lines of a single requested `className#methodName` so agents never read full files unnecessarily.
-4. **Expose via Spring AI `CallAdvisor` & MCP JSON-RPC 2.0**:
+4. **Expose via Spring AI `CallAdvisor`, MCP JSON-RPC 2.0 & CI/CD Reports**:
    * `SpringContextCompactorAdvisor` implements Spring AI's `CallAdvisor` to automatically compact raw Java classes and fenced ` ```java ` code blocks inside outgoing `ChatClientRequest` prompts.
    * `McpCompactorDispatcher` exposes deterministic MCP tools (`compact_spring_file`, `compact_spring_slice`, `read_spring_method_body`, `analyze_compaction_budget`) over HTTP (`POST /internal/spring-compactor/mcp`) and standard I/O (`McpStdioServer`).
+   * `CompactorEfficiencyBenchmarkService` and `CompactorReportExporter` compute the 5-metric portfolio benchmark and export JSON, Markdown, and JUnit XML reports (`target/compactor-reports/`).
 
 ### 1.3 System Boundaries
 
-* **Zero Boot Required for Source Compaction**: File and slice compaction operate directly on Java ASTs in under 5ms per file without requiring a running database or initialized `ApplicationContext`.
-* **100% Contract Preservation**: Public/protected method signatures, constructor-injected fields, JPA `@Column`/`@JoinColumn` metadata, Bean Validation constraints, `@Query` strings, and `@Bean` return types are never stripped.
+* **Zero Boot Required for Source Compaction**: File and slice compaction operate directly on Java ASTs in milliseconds without requiring a running database or initialized `ApplicationContext`.
+* **100% Contract Preservation**: Public/protected method signatures, constructor-injected fields, JPA `@Column`/`@JoinColumn` metadata, Bean Validation constraints, `@Query` strings, and `@Bean` return types are never stripped (`106 / 106` contracts verified in `trade-clearing-compactor-demo`).
 
 ### 1.4 Accuracy & Performance Targets
 
-* **65% to 85% Token Reduction on Enterprise Classes**: Strips boilerplate accessors, `equals`/`hashCode`, builders, and method bodies while retaining exact line numbers (`Lstart-Lend`) for surgical editing.
-* **Deterministic Inline Trap Preservation**: Even when a method body is omitted from the compacted skeleton, any intra-class self-invocation of a `@Transactional` method inside that body is surfaced as an inline comment with the exact call-site line number.
+* **58.8% Repository-Wide & 80.4% Entity Token Reduction**: Strips boilerplate accessors, `equals`/`hashCode`, builders, and method bodies while retaining exact line numbers (`Lstart-Lend`) for surgical editing.
+* **100% Inline Proxy Trap Recall**: Even when a method body is omitted from the compacted skeleton, every intra-class self-invocation of a `@Transactional` method inside that body is surfaced as an inline comment with the exact call-site line number (`4 / 4` traps retained inline vs `3 / 4` lost after naive body stripping).
 
 ---
 
@@ -41,7 +42,10 @@ This project provides a reusable Spring Boot starter, Spring AI `CallAdvisor`, a
 
 ```text
 spring-ai-context-compactor/
-|-- pom.xml                                 # Parent BOM (Java 21, Spring Boot 4.1.x, Spring AI 2.0.x, JavaParser 3.28.x)
+|-- pom.xml                                 # Parent BOM (Java 21, Spring Boot 4.1.0, Spring AI 2.0.1, JavaParser 3.28.0)
+|-- Dockerfile                              # Multi-stage Java 21 Alpine build
+|-- docker-compose.yml                      # PostgreSQL 16 + RabbitMQ 3.13 + Demo service
+|-- .github/workflows/ci.yml                # GitHub Actions CI & Benchmark Step Summary
 |-- spring-context-compactor-starter/       # Reusable Spring Context Compactor, CallAdvisor & MCP Starter
 |   |-- src/main/java/.../annotation/       # @EnableSpringContextCompactor
 |   |-- src/main/java/.../config/           # SpringContextCompactorAutoConfiguration, CompactorProperties
@@ -49,13 +53,14 @@ spring-ai-context-compactor/
 |   |-- src/main/java/.../compactor/        # SpringAstCompactor, StereotypeClassifier, SpringProxyTrapScanner
 |   |-- src/main/java/.../service/          # SpringSliceExpander, CompactionBudgetService
 |   |-- src/main/java/.../advisor/          # SpringContextCompactorAdvisor (Spring AI CallAdvisor)
-|   \-- src/main/java/.../mcp/              # McpCompactorDispatcher, CompactorMcpHttpController, McpStdioServer
+|   |-- src/main/java/.../mcp/              # McpCompactorDispatcher, CompactorMcpHttpController, McpStdioServer
+|   \-- src/main/java/.../report/           # CompactorEfficiencyBenchmarkService, CompactorReportExporter, Benchmark DTOs
 \-- trade-clearing-compactor-demo/          # Institutional FX & Derivatives Trade Clearing Demo App
     |-- src/main/java/.../margin/           # Conditional Margin Engines (SPAN vs ISDA SIMM)
     |-- src/main/java/.../ledger/           # Verbose JPA Entities, Repositories & Multi-Propagation Audit Services
     |-- src/main/java/.../trade/            # Trade Clearing Controller, Service & Self-Invocation Trap Scenario
     |-- src/main/java/.../messaging/        # RabbitMQ Exchanges, Queues, DLQ & @RabbitListener Consumers
-    \-- src/test/java/.../                  # Testcontainers Integration Tests (PostgreSQL 16 + RabbitMQ 3.13)
+    \-- src/test/java/.../                  # Testcontainers Integration & Benchmark Tests (PostgreSQL 16 + RabbitMQ 3.13)
 ```
 
 ---
@@ -66,15 +71,15 @@ spring-ai-context-compactor/
 
 * **Stereotype-Driven Pruning Rules**:
   * `ENTITY` (`@Entity`, `@Table`, `@MappedSuperclass`, `@Embeddable`): Retains fields, `@Id`, `@GeneratedValue`, `@Column`, `@ManyToOne`, `@OneToMany`, `@JoinColumn`, `@Version`, and validation annotations. Strips getters, setters, `equals`, `hashCode`, `toString`, and builder classes.
-  * `SERVICE` / `COMPONENT` (`@Service`, `@Component`): Retains class annotations, constructor-injected `final` fields, `@Value` fields, and public/protected method signatures with `@Transactional` metadata. Replaces method bodies with `/* Lstart-Lend: body omitted (N lines) */` while surfacing inline `SELF_INVOCATION_BYPASS` and `READ_ONLY_CALLING_WRITE_REQUIRED` trap notes extracted before pruning.
+  * `SERVICE` / `COMPONENT` (`@Service`, `@Component`): Retains class annotations, constructor-injected `final` fields, `@Value` fields, and public/protected method signatures with `@Transactional` metadata. Replaces method bodies with `/* Lstart-Lend: body omitted (N lines) */` while surfacing inline `SELF_INVOCATION_BYPASS`, `READ_ONLY_CALLING_WRITE_REQUIRED`, and `NON_PUBLIC_TRANSACTIONAL` trap notes extracted before pruning.
   * `CONTROLLER` (`@RestController`, `@Controller`): Retains `@RequestMapping`, `@GetMapping`/`@PostMapping`, `@PathVariable`, `@RequestParam`, `@RequestBody`, `@Valid`, `@PreAuthorize`, and response types; replaces handler bodies with line-range markers.
   * `REPOSITORY` (`@Repository`, `JpaRepository`): Retains full interface declarations, `@Query` JPQL/native SQL strings, `@Modifying`, and `@EntityGraph` definitions.
-  * `CONFIGURATION` (`@Configuration`, `@ConfigurationProperties`): Retains `@Bean` method signatures, `@ConditionalOnProperty`, `@Profile`, `@Primary`, and RabbitMQ `Exchange`/`Queue`/`Binding` definitions.
+  * `CONFIGURATION` (`@Configuration`, `@ConfigurationProperties`): Retains `@Bean` method signatures, `@ConditionalOnProperty`, `@Profile`, `@Primary`, and single-line return statements.
 
 ### 3.2 Surgical Slice & Method Body Expander (`SpringSliceExpander`)
 
 * **Multi-File Slice Compaction**: Scans a directory or package slice and returns a unified, token-budgeted skeleton bundle with dependency headers.
-* **Exact Method Unfolding**: Given a file path and `methodName` (or line range), returns the exact uncompacted Java source lines with 1-based line numbers so an agent can apply surgical edits immediately.
+* **Exact Method Unfolding**: Given a file path/class query and `methodName`, returns the exact uncompacted Java source lines with 1-based line numbers so an agent can apply surgical edits immediately.
 
 ### 3.3 Spring AI `CallAdvisor` (`SpringContextCompactorAdvisor`)
 
@@ -82,7 +87,12 @@ spring-ai-context-compactor/
 
 ### 3.4 MCP JSON-RPC 2.0 Server (`McpCompactorDispatcher`)
 
-* **Protocol Compliance**: Handles JSON-RPC 2.0 `initialize`, `tools/list`, and `tools/call` over HTTP (`POST /internal/spring-compactor/mcp`) and stdio (`McpStdioServer`) with four tools: `compact_spring_file`, `compact_spring_slice`, `read_spring_method_body`, and `analyze_compaction_budget`.
+* **Protocol Compliance**: Handles JSON-RPC 2.0 `initialize`, `notifications/*`, `ping`, `tools/list`, and `tools/call` over HTTP (`POST /internal/spring-compactor/mcp`) and stdio (`McpStdioServer`) with four tools: `compact_spring_file`, `compact_spring_slice`, `read_spring_method_body`, and `analyze_compaction_budget`.
+
+### 3.5 Portfolio Efficiency Benchmark & CI/CD Report Exporter (`com.builtbyjuls.compactor.report`)
+
+* **`CompactorEfficiencyBenchmarkService`**: Evaluates a Java source tree across five reproducible metrics (`repositoryTokenConsumption`, `surgicalEditWorkflow`, `springContractRetention`, `inlineProxyTrapDetection`, `springAiAdvisorSavings`) and produces `CompactorBenchmarkReportDto` containing `BenchmarkMetricRowDto` rows.
+* **`CompactorReportExporter`**: Writes `compaction-budget.json`, `benchmark-report.json`, `compactor-summary.md`, and `junit-compactor.xml` to `spring.compactor.report-output-dir` (`target/compactor-reports` by default), logs a console summary table, and optionally enforces build failure on detected proxy traps (`spring.compactor.fail-on-proxy-traps=true`) via `CompactorTrapViolationException`.
 
 ---
 

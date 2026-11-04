@@ -1,0 +1,39 @@
+name: CI
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  build-and-benchmark:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Java 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '21'
+          cache: 'maven'
+
+      - name: Run Maven build and Testcontainers verification
+        run: ./mvnw -B clean verify
+
+      - name: Publish Spring Compactor Benchmark Summary
+        if: always()
+        run: |
+          if [ -f trade-clearing-compactor-demo/target/compactor-reports/compactor-summary.md ]; then
+            cat trade-clearing-compactor-demo/target/compactor-reports/compactor-summary.md >> $GITHUB_STEP_SUMMARY
+          fi
+
+      - name: Upload Compactor Benchmark & JUnit Reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: spring-compactor-reports
+          path: '**/target/compactor-reports/*'

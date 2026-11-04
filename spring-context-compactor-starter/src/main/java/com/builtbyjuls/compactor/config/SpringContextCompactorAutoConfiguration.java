@@ -7,6 +7,8 @@ import com.builtbyjuls.compactor.compactor.StereotypeClassifier;
 import com.builtbyjuls.compactor.mcp.CompactorMcpHttpController;
 import com.builtbyjuls.compactor.mcp.McpCompactorDispatcher;
 import com.builtbyjuls.compactor.mcp.McpStdioServer;
+import com.builtbyjuls.compactor.report.CompactorEfficiencyBenchmarkService;
+import com.builtbyjuls.compactor.report.CompactorReportExporter;
 import com.builtbyjuls.compactor.service.CompactionBudgetService;
 import com.builtbyjuls.compactor.service.SpringSliceExpander;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -110,5 +112,39 @@ public class SpringContextCompactorAutoConfiguration {
             McpCompactorDispatcher mcpCompactorDispatcher
     ) {
         return new CompactorMcpHttpController(compactionBudgetService, mcpCompactorDispatcher);
+    }
+
+    @Bean
+    @ConditionalOnMissingBean
+    public CompactorEfficiencyBenchmarkService compactorEfficiencyBenchmarkService(
+            SpringAstCompactor springAstCompactor,
+            SpringSliceExpander springSliceExpander,
+            CompactionBudgetService compactionBudgetService,
+            SpringContextCompactorAdvisor springContextCompactorAdvisor,
+            McpCompactorDispatcher mcpCompactorDispatcher
+    ) {
+        return new CompactorEfficiencyBenchmarkService(
+                springAstCompactor,
+                springSliceExpander,
+                compactionBudgetService,
+                springContextCompactorAdvisor,
+                mcpCompactorDispatcher
+        );
+    }
+
+    @Bean
+    @ConditionalOnMissingBean
+    public CompactorReportExporter compactorReportExporter(
+            CompactionBudgetService compactionBudgetService,
+            CompactorEfficiencyBenchmarkService compactorEfficiencyBenchmarkService,
+            CompactorProperties compactorProperties,
+            ObjectMapper compactorObjectMapper
+    ) {
+        return new CompactorReportExporter(
+                compactionBudgetService,
+                compactorEfficiencyBenchmarkService,
+                compactorProperties,
+                compactorObjectMapper
+        );
     }
 }
