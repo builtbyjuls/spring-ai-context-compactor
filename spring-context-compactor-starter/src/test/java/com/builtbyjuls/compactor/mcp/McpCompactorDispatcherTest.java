@@ -525,4 +525,157 @@ class McpCompactorDispatcherTest {
         List<MethodBodySliceDto> slices = (List<MethodBodySliceDto>) result.get("structuredContent");
         assertThat(slices).hasSize(2);
     }
+
+    @Test
+    @DisplayName("tools/list schema includes focusMode and wildcard documentation for compact_spring_file")
+    void toolsListSchemaIncludesFocusMode() {
+        McpJsonRpcRequest request = new McpJsonRpcRequest("2.0", 25, "tools/list", Map.of());
+        McpJsonRpcResponse response = dispatcher.dispatch(request);
+        assertThat(response).isNotNull();
+        assertThat(response.error()).isNull();
+
+        @SuppressWarnings("unchecked")
+        Map<String, Object> result = (Map<String, Object>) response.result();
+        @SuppressWarnings("unchecked")
+        List<McpToolDefinition> tools = (List<McpToolDefinition>) result.get("tools");
+
+        McpToolDefinition compactFileTool = tools.stream()
+                .filter(t -> "compact_spring_file".equals(t.name()))
+                .findFirst()
+                .orElseThrow();
+
+        @SuppressWarnings("unchecked")
+        Map<String, Object> properties = (Map<String, Object>) compactFileTool.inputSchema().get("properties");
+        assertThat(properties).containsKey("focusMode");
+
+        @SuppressWarnings("unchecked")
+        Map<String, Object> focusModeProp = (Map<String, Object>) properties.get("focusMode");
+        assertThat(focusModeProp.get("type")).isEqualTo("boolean");
+
+        @SuppressWarnings("unchecked")
+        Map<String, Object> expandMethodsProp = (Map<String, Object>) properties.get("expandMethods");
+        assertThat((String) expandMethodsProp.get("description")).contains("wildcard patterns");
+    }
+
+    @Test
+    @DisplayName("tools/call compact_spring_file auto-expands intra-class callees and enables focused skeleton mode")
+    void toolsCallCompactSpringFileWithCalleeExpansionAndFocusedSkeleton() throws IOException {
+        Path servicePkg = tempDir.resolve("com/builtbyjuls/clearing/order");
+        Files.createDirectories(servicePkg);
+
+        String multiMethodSource = """
+                package com.builtbyjuls.clearing.order;
+
+                import org.springframework.stereotype.Service;
+
+                @Service
+                public class OrderProcessingService {
+
+                    public void placeOrder() {
+                        this.validateOrderItems();
+                    }
+
+                    private void validateOrderItems() {
+                        calculateTax();
+                    }
+
+                    private void calculateTax() {
+                        System.out.println("tax calculated");
+                    }
+
+                    public void trackOrderStatus() {
+                        System.out.println("status tracking");
+                    }
+
+                    public void cancelActiveOrder() {
+                        System.out.println("order cancelled");
+                    }
+                }
+                """;
+        Files.writeString(servicePkg.resolve("OrderProcessingService.java"), multiMethodSource);
+
+        McpJsonRpcRequest request = new McpJsonRpcRequest("2.0", 26, "tools/call", Map.of(
+                "name", "compact_spring_file",
+                "arguments", Map.of(
+                        "query", "OrderProcessingService",
+                        "expandMethods", "placeOrder",
+                        "sourceRoot", tempDir.toString()
+                )
+        ));
+
+        McpJsonRpcResponse response = dispatcher.dispatch(request);
+        assertThat(response).isNotNull();
+        assertThat(response.error()).isNull();
+
+        @SuppressWarnings("unchecked")
+        Map<String, Object> result = (Map<String, Object>) response.result();
+        @SuppressWarnings("unchecked")
+        List<Map<String, Object>> content = (List<Map<String, Object>>) result.get("content");
+        String text = (String) content.get(0).get("text");
+
+        // Verify intra-class helper callees (validateOrderItems and calculateTax) are unfolded
+        assertThat(text).contains("// [AUTO-EXPANDED METHOD SLICES]");
+        assertThat(text).contains("OrderProcessingService#placeOrder");
+        assertThat(text).contains("OrderProcessingService#validateOrderItems");
+        assertThat(text).contains("OrderProcessingService#calculateTax");
+
+        // Verify focused skeleton mode collapses untouched methods into summary comment
+        assertThat(text).contains("// Other Methods (2 omitted): trackOrderStatus(L");
+        assertThat(text).contains("cancelActiveOrder(L");
+        assertThat(text).doesNotContain("public void trackOrderStatus() /*");
+        assertThat(text).doesNotContain("public void cancelActiveOrder() /*");
+
+        // Verify placeOrder signature remains in skeleton
+        assertThat(text).contains("public void placeOrder() /*");
+    }
+
+    @Test
+    @DisplayName("tools/call compact_spring_file respects focusMode: false override")
+    void toolsCallCompactSpringFileWithFocusModeFalse() throws IOException {
+        Path servicePkg = tempDir.resolve("com/builtbyjuls/clearing/order");
+        Files.createDirectories(servicePkg);
+
+        String multiMethodSource = """
+                package com.builtbyjuls.clearing.order;
+
+                import org.springframework.stereotype.Service;
+
+                @Service
+                public class OrderQueryService {
+
+                    public void queryOne() {
+                        System.out.println("1");
+                    }
+
+                    public void queryTwo() {
+                        System.out.println("2");
+                    }
+                }
+                """;
+        Files.writeString(servicePkg.resolve("OrderQueryService.java"), multiMethodSource);
+
+        McpJsonRpcRequest request = new McpJsonRpcRequest("2.0", 27, "tools/call", Map.of(
+                "name", "compact_spring_file",
+                "arguments", Map.of(
+                        "query", "OrderQueryService",
+                        "expandMethods", "queryOne",
+                        "focusMode", false,
+                        "sourceRoot", tempDir.toString()
+                )
+        ));
+
+        McpJsonRpcResponse response = dispatcher.dispatch(request);
+        assertThat(response).isNotNull();
+        assertThat(response.error()).isNull();
+
+        @SuppressWarnings("unchecked")
+        Map<String, Object> result = (Map<String, Object>) response.result();
+        @SuppressWarnings("unchecked")
+        List<Map<String, Object>> content = (List<Map<String, Object>>) result.get("content");
+        String text = (String) content.get(0).get("text");
+
+        // With focusMode: false, queryTwo remains intact in skeleton, not omitted
+        assertThat(text).contains("public void queryTwo()");
+        assertThat(text).doesNotContain("// Other Methods");
+    }
 }

@@ -544,4 +544,131 @@ class SpringSliceExpanderTest {
         assertThat(sliceExpander.expandMethodBodies(tempDir, "TradeService", List.of())).isEmpty();
         assertThat(sliceExpander.expandMethodBodies(tempDir, "TradeService", null)).isEmpty();
     }
+
+    @Test
+    @DisplayName("expandMethodBody supports wildcard glob patterns like *Trade* and verify*")
+    void expandMethodBodyGlobPatterns(@TempDir Path tempDir) throws IOException {
+        createSampleSourceTree(tempDir);
+
+        List<MethodBodySliceDto> tradeSlices = sliceExpander.expandMethodBody(
+                tempDir,
+                "TradeService",
+                "*Trade*"
+        );
+        assertThat(tradeSlices.stream().map(MethodBodySliceDto::methodName).toList())
+                .containsExactly("bookTrade", "bookTrade", "auditTrade");
+
+        List<MethodBodySliceDto> verifySlices = sliceExpander.expandMethodBody(
+                tempDir,
+                "TradeService",
+                "verify*"
+        );
+        assertThat(verifySlices).hasSize(1);
+        assertThat(verifySlices.get(0).methodName()).isEqualTo("verifyCounterpartyLimits");
+
+        List<MethodBodySliceDto> positionSlices = sliceExpander.expandMethodBody(
+                tempDir,
+                "TradeService",
+                "*Position"
+        );
+        assertThat(positionSlices).hasSize(1);
+        assertThat(positionSlices.get(0).methodName()).isEqualTo("calculateNetPosition");
+    }
+
+    @Test
+    @DisplayName("expandMethodBodiesWithCallees transitively unfolds intra-class helpers in source order")
+    void expandMethodBodiesWithCalleesTransitive(@TempDir Path tempDir) throws IOException {
+        Path serviceDir = tempDir.resolve("com/example/demo");
+        Files.createDirectories(serviceDir);
+
+        String sampleSource = """
+                package com.example.demo;
+
+                import org.springframework.stereotype.Service;
+
+                @Service
+                public class ChainedWorkflowService {
+
+                    public void unrelatedMethod() {
+                        System.out.println("not invoked");
+                    }
+
+                    public void startWorkflow() {
+                        System.out.println("workflow start");
+                        this.processIntermediate();
+                    }
+
+                    private void processIntermediate() {
+                        System.out.println("intermediate step");
+                        finishWorkflow();
+                    }
+
+                    private void finishWorkflow() {
+                        System.out.println("workflow done");
+                    }
+                }
+                """;
+        Files.writeString(serviceDir.resolve("ChainedWorkflowService.java"), sampleSource);
+
+        List<MethodBodySliceDto> slices = sliceExpander.expandMethodBodiesWithCallees(
+                tempDir,
+                "ChainedWorkflowService",
+                List.of("startWorkflow")
+        );
+
+        // startWorkflow -> processIntermediate -> finishWorkflow
+        // Order must be declaration order: startWorkflow, processIntermediate, finishWorkflow
+        assertThat(slices.stream().map(MethodBodySliceDto::methodName).toList())
+                .containsExactly("startWorkflow", "processIntermediate", "finishWorkflow");
+        assertThat(slices.stream().map(MethodBodySliceDto::methodName).toList())
+                .doesNotContain("unrelatedMethod");
+    }
+
+    @Test
+    @DisplayName("expandMethodBodiesWithCallees handles recursion and mutual calls safely")
+    void expandMethodBodiesWithCalleesRecursionSafety(@TempDir Path tempDir) throws IOException {
+        Path serviceDir = tempDir.resolve("com/example/demo");
+        Files.createDirectories(serviceDir);
+
+        String sampleSource = """
+                package com.example.demo;
+
+                import org.springframework.stereotype.Service;
+
+                @Service
+                public class RecursiveService {
+
+                    public void selfRecursive(int count) {
+                        if (count > 0) {
+                            this.selfRecursive(count - 1);
+                        }
+                    }
+
+                    public void ping() {
+                        this.pong();
+                    }
+
+                    public void pong() {
+                        ping();
+                    }
+                }
+                """;
+        Files.writeString(serviceDir.resolve("RecursiveService.java"), sampleSource);
+
+        List<MethodBodySliceDto> selfSlices = sliceExpander.expandMethodBodiesWithCallees(
+                tempDir,
+                "RecursiveService",
+                List.of("selfRecursive")
+        );
+        assertThat(selfSlices).hasSize(1);
+        assertThat(selfSlices.get(0).methodName()).isEqualTo("selfRecursive");
+
+        List<MethodBodySliceDto> mutualSlices = sliceExpander.expandMethodBodiesWithCallees(
+                tempDir,
+                "RecursiveService",
+                List.of("ping")
+        );
+        assertThat(mutualSlices.stream().map(MethodBodySliceDto::methodName).toList())
+                .containsExactly("ping", "pong");
+    }
 }

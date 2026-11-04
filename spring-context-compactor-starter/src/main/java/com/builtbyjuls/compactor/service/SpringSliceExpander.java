@@ -15,12 +15,14 @@ import com.github.javaparser.ast.body.ClassOrInterfaceDeclaration;
 import com.github.javaparser.ast.body.MethodDeclaration;
 import com.github.javaparser.ast.body.TypeDeclaration;
 import com.github.javaparser.ast.expr.AnnotationExpr;
+import com.github.javaparser.ast.expr.MethodCallExpr;
 
 import java.io.IOException;
 import java.io.UncheckedIOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collection;
@@ -28,11 +30,17 @@ import java.util.Collections;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 import java.util.Objects;
+import java.util.Queue;
 import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 
 public class SpringSliceExpander {
+
+    private static final Map<String, Pattern> GLOB_CACHE = new ConcurrentHashMap<>();
 
     private final SpringAstCompactor astCompactor;
     private final SpringProxyTrapScanner trapScanner;
@@ -139,6 +147,107 @@ public class SpringSliceExpander {
         return expandMethodBody(sourceRoot, fileOrClassQuery, joined);
     }
 
+    public List<MethodBodySliceDto> expandMethodBodiesWithCallees(
+            Path sourceRoot,
+            String fileOrClassQuery,
+            Collection<String> seedMethodNames
+    ) {
+        if (sourceRoot == null || !Files.exists(sourceRoot)
+                || fileOrClassQuery == null || fileOrClassQuery.isBlank()
+                || seedMethodNames == null || seedMethodNames.isEmpty()) {
+            return List.of();
+        }
+
+        Set<String> seedPatterns = seedMethodNames.stream()
+                .filter(Objects::nonNull)
+                .flatMap(s -> Arrays.stream(s.split(",")))
+                .map(String::trim)
+                .filter(s -> !s.isEmpty())
+                .collect(Collectors.toCollection(LinkedHashSet::new));
+
+        if (seedPatterns.isEmpty()) {
+            return List.of();
+        }
+
+        Path normalizedRoot = sourceRoot.toAbsolutePath().normalize();
+        List<Path> matchingFiles = locateMatchingFiles(normalizedRoot, fileOrClassQuery.trim());
+        if (matchingFiles.isEmpty()) {
+            return List.of();
+        }
+
+        List<MethodBodySliceDto> results = new ArrayList<>();
+
+        for (Path file : matchingFiles) {
+            List<String> originalLines;
+            String javaSource;
+            try {
+                originalLines = Files.readAllLines(file, StandardCharsets.UTF_8);
+                javaSource = Files.readString(file, StandardCharsets.UTF_8);
+            } catch (IOException e) {
+                throw new UncheckedIOException("Failed to read file: " + file, e);
+            }
+
+            ParseResult<CompilationUnit> parseResult = javaParser.parse(javaSource);
+            if (!parseResult.isSuccessful() || parseResult.getResult().isEmpty()) {
+                continue;
+            }
+
+            CompilationUnit cu = parseResult.getResult().get();
+            TypeDeclaration<?> primaryType = cu.getPrimaryType().orElseGet(() ->
+                    cu.getTypes().isEmpty() ? null : cu.getTypes().get(0)
+            );
+            if (primaryType == null) {
+                continue;
+            }
+
+            String className = primaryType.getNameAsString();
+            List<MethodTrapNoteDto> allTraps = List.of();
+            if (properties.isDetectProxyTraps() && primaryType instanceof ClassOrInterfaceDeclaration cid) {
+                allTraps = trapScanner.scan(cid);
+            }
+
+            Set<MethodDeclaration> visited = new LinkedHashSet<>();
+            Queue<MethodDeclaration> queue = new ArrayDeque<>();
+
+            for (MethodDeclaration method : primaryType.getMethods()) {
+                if (matchesAnyMethodPattern(method.getNameAsString(), seedPatterns)) {
+                    if (visited.add(method)) {
+                        queue.add(method);
+                    }
+                }
+            }
+
+            while (!queue.isEmpty()) {
+                MethodDeclaration current = queue.poll();
+                if (current.getBody().isEmpty()) {
+                    continue;
+                }
+                List<MethodCallExpr> calls = current.findAll(MethodCallExpr.class);
+                for (MethodCallExpr call : calls) {
+                    boolean isIntraClass = call.getScope().isEmpty()
+                            || call.getScope().get().isThisExpr();
+                    if (!isIntraClass) {
+                        continue;
+                    }
+                    String calleeName = call.getNameAsString();
+                    for (MethodDeclaration m : primaryType.getMethods()) {
+                        if (m.getNameAsString().equals(calleeName) && visited.add(m)) {
+                            queue.add(m);
+                        }
+                    }
+                }
+            }
+
+            for (MethodDeclaration method : primaryType.getMethods()) {
+                if (visited.contains(method)) {
+                    results.add(buildMethodSlice(method, originalLines, className, file, normalizedRoot, allTraps));
+                }
+            }
+        }
+
+        return Collections.unmodifiableList(results);
+    }
+
     public List<MethodBodySliceDto> expandMethodBody(Path sourceRoot, String fileOrClassQuery, String methodName) {
         if (sourceRoot == null || !Files.exists(sourceRoot)
                 || fileOrClassQuery == null || fileOrClassQuery.isBlank()
@@ -153,7 +262,6 @@ public class SpringSliceExpander {
         if (targetMethods.isEmpty()) {
             return List.of();
         }
-        boolean matchAll = targetMethods.contains("*");
 
         Path normalizedRoot = sourceRoot.toAbsolutePath().normalize();
         List<Path> matchingFiles = locateMatchingFiles(normalizedRoot, fileOrClassQuery.trim());
@@ -193,49 +301,93 @@ public class SpringSliceExpander {
             }
 
             for (MethodDeclaration method : primaryType.getMethods()) {
-                if (matchAll || targetMethods.contains(method.getNameAsString())) {
-                    int startLine = method.getBegin().map(p -> p.line).orElse(1);
-                    for (AnnotationExpr ann : method.getAnnotations()) {
-                        if (ann.getBegin().isPresent()) {
-                            startLine = Math.min(startLine, ann.getBegin().get().line);
-                        }
-                    }
-                    int endLine = method.getEnd().map(p -> p.line).orElse(startLine);
-
-                    if (!originalLines.isEmpty()) {
-                        startLine = Math.max(1, Math.min(startLine, originalLines.size()));
-                        endLine = Math.max(startLine, Math.min(endLine, originalLines.size()));
-                    }
-
-                    List<String> formatted = new ArrayList<>();
-                    for (int lineNum = startLine; lineNum <= endLine && lineNum <= originalLines.size(); lineNum++) {
-                        formatted.add(String.format(Locale.ROOT, "%4d: %s", lineNum, originalLines.get(lineNum - 1)));
-                    }
-                    String numberedSourceLines = String.join("\n", formatted);
-                    int lineCount = Math.max(1, endLine - startLine + 1);
-                    int estimatedTokens = (int) Math.ceil(numberedSourceLines.length() / 4.0);
-
-                    String signature = SpringAstCompactor.buildMethodSignature(method);
-                    List<MethodTrapNoteDto> methodTraps = SpringAstCompactor.findTrapsForMethod(method, allTraps);
-                    String relPath = normalizedRoot.relativize(file.toAbsolutePath().normalize()).toString().replace('\\', '/');
-
-                    results.add(new MethodBodySliceDto(
-                            relPath,
-                            className,
-                            method.getNameAsString(),
-                            signature,
-                            startLine,
-                            endLine,
-                            lineCount,
-                            estimatedTokens,
-                            numberedSourceLines,
-                            methodTraps
-                    ));
+                if (matchesAnyMethodPattern(method.getNameAsString(), targetMethods)) {
+                    results.add(buildMethodSlice(method, originalLines, className, file, normalizedRoot, allTraps));
                 }
             }
         }
 
         return Collections.unmodifiableList(results);
+    }
+
+    private MethodBodySliceDto buildMethodSlice(
+            MethodDeclaration method,
+            List<String> originalLines,
+            String className,
+            Path file,
+            Path normalizedRoot,
+            List<MethodTrapNoteDto> allTraps
+    ) {
+        int startLine = method.getBegin().map(p -> p.line).orElse(1);
+        for (AnnotationExpr ann : method.getAnnotations()) {
+            if (ann.getBegin().isPresent()) {
+                startLine = Math.min(startLine, ann.getBegin().get().line);
+            }
+        }
+        int endLine = method.getEnd().map(p -> p.line).orElse(startLine);
+
+        if (!originalLines.isEmpty()) {
+            startLine = Math.max(1, Math.min(startLine, originalLines.size()));
+            endLine = Math.max(startLine, Math.min(endLine, originalLines.size()));
+        }
+
+        List<String> formatted = new ArrayList<>();
+        for (int lineNum = startLine; lineNum <= endLine && lineNum <= originalLines.size(); lineNum++) {
+            formatted.add(String.format(Locale.ROOT, "%4d: %s", lineNum, originalLines.get(lineNum - 1)));
+        }
+        String numberedSourceLines = String.join("\n", formatted);
+        int lineCount = Math.max(1, endLine - startLine + 1);
+        int estimatedTokens = (int) Math.ceil(numberedSourceLines.length() / 4.0);
+
+        String signature = SpringAstCompactor.buildMethodSignature(method);
+        List<MethodTrapNoteDto> methodTraps = SpringAstCompactor.findTrapsForMethod(method, allTraps);
+        String relPath = normalizedRoot.relativize(file.toAbsolutePath().normalize()).toString().replace('\\', '/');
+
+        return new MethodBodySliceDto(
+                relPath,
+                className,
+                method.getNameAsString(),
+                signature,
+                startLine,
+                endLine,
+                lineCount,
+                estimatedTokens,
+                numberedSourceLines,
+                methodTraps
+        );
+    }
+
+    private boolean matchesAnyMethodPattern(String actualMethodName, Set<String> patterns) {
+        if (patterns == null || patterns.isEmpty() || actualMethodName == null) {
+            return false;
+        }
+        if (patterns.contains("*") || patterns.contains(actualMethodName)) {
+            return true;
+        }
+        for (String pattern : patterns) {
+            if (pattern.contains("*") && globMatches(pattern, actualMethodName)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private boolean globMatches(String glob, String text) {
+        Pattern pattern = GLOB_CACHE.computeIfAbsent(glob, g -> {
+            StringBuilder regex = new StringBuilder("^");
+            String[] parts = g.split("\\*", -1);
+            for (int i = 0; i < parts.length; i++) {
+                if (i > 0) {
+                    regex.append(".*");
+                }
+                if (!parts[i].isEmpty()) {
+                    regex.append(Pattern.quote(parts[i]));
+                }
+            }
+            regex.append("$");
+            return Pattern.compile(regex.toString());
+        });
+        return pattern.matcher(text).matches();
     }
 
     private List<Path> findSliceFiles(Path normalizedRoot, String sliceQuery) {

@@ -120,7 +120,7 @@ class SpringCompactorMcpIntegrationTest extends ClearingTestContainersBase {
     }
 
     @Test
-    @DisplayName("POST /internal/spring-compactor/mcp tools/call compact_spring_file unfolds explicitly requested expandMethods")
+    @DisplayName("POST /internal/spring-compactor/mcp tools/call compact_spring_file unfolds explicitly requested expandMethods and intra-class callees")
     void mcpToolCallCompactSpringFileExpandMethods() throws Exception {
         McpJsonRpcRequest request = new McpJsonRpcRequest("2.0", 31, "tools/call", Map.of(
                 "name", "compact_spring_file",
@@ -137,7 +137,34 @@ class SpringCompactorMcpIntegrationTest extends ClearingTestContainersBase {
                 .andExpect(jsonPath("$.id").value(31))
                 .andExpect(jsonPath("$.result.isError").value(false))
                 .andExpect(jsonPath("$.result.content[0].text").value(containsString("// [AUTO-EXPANDED METHOD SLICES] (Exact raw source lines ready for edit_file Target)")))
-                .andExpect(jsonPath("$.result.content[0].text").value(containsString("TradeClearingService#novateAndClearTrade")));
+                .andExpect(jsonPath("$.result.content[0].text").value(containsString("TradeClearingService#novateAndClearTrade")))
+                .andExpect(jsonPath("$.result.content[0].text").value(containsString("TradeClearingService#validateSubmission")))
+                .andExpect(jsonPath("$.result.content[0].text").value(containsString("TradeClearingService#validateAndResolveActiveMember")))
+                .andExpect(jsonPath("$.result.content[0].text").value(containsString("TradeClearingService#formatAuditSummary")))
+                .andExpect(jsonPath("$.result.content[0].text").value(containsString("TradeClearingService#formatCallReference")));
+    }
+
+    @Test
+    @DisplayName("POST /internal/spring-compactor/mcp tools/call compact_spring_file collapses untouched methods in focused skeleton mode")
+    void mcpToolCallCompactSpringFileFocusedSkeletonMode() throws Exception {
+        McpJsonRpcRequest request = new McpJsonRpcRequest("2.0", 32, "tools/call", Map.of(
+                "name", "compact_spring_file",
+                "arguments", Map.of(
+                        "query", "TradeClearingService",
+                        "expandMethods", "archiveExpiredTradeNotice",
+                        "expandTrappedMethods", false
+                )
+        ));
+
+        mockMvc.perform(post("/internal/spring-compactor/mcp")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(request)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.id").value(32))
+                .andExpect(jsonPath("$.result.isError").value(false))
+                .andExpect(jsonPath("$.result.content[0].text").value(containsString("// Other Methods (6 omitted): novateAndClearTrade(L")))
+                .andExpect(jsonPath("$.result.content[0].text").value(containsString("TradeClearingService#archiveExpiredTradeNotice")))
+                .andExpect(jsonPath("$.result.content[0].text").value(not(containsString("public ClearedTradePositionDto novateAndClearTrade("))));
     }
 
     @Test

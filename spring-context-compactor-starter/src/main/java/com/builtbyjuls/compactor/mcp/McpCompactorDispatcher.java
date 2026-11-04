@@ -3,6 +3,7 @@ package com.builtbyjuls.compactor.mcp;
 import com.builtbyjuls.compactor.compactor.SpringAstCompactor;
 import com.builtbyjuls.compactor.config.CompactorProperties;
 import com.builtbyjuls.compactor.model.CompactedFileResultDto;
+import com.builtbyjuls.compactor.model.CompactedMethodSummaryDto;
 import com.builtbyjuls.compactor.model.MethodBodySliceDto;
 import com.builtbyjuls.compactor.model.MethodTrapNoteDto;
 import com.builtbyjuls.compactor.model.ProjectCompactionBudgetDto;
@@ -14,6 +15,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.ArrayList;
 import java.util.Collection;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -103,8 +105,9 @@ public class McpCompactorDispatcher {
                                 "properties", Map.of(
                                         "query", Map.of("type", "string", "description", "Relative file path or simple class name (e.g. TradeClearingService or ClearedTrade.java)"),
                                         "fileOrClassQuery", Map.of("type", "string", "description", "Alternative query parameter name for relative path or class name"),
-                                        "expandMethods", Map.of("type", "string", "description", "Optional comma-separated method names to unfold with 1-based line numbers below the skeleton in the same call"),
+                                        "expandMethods", Map.of("type", "string", "description", "Optional comma-separated method names or * wildcard patterns (e.g. 'savePet,*Visit*') to unfold with exact raw source lines"),
                                         "expandTrappedMethods", Map.of("type", "boolean", "description", "Automatically unfold 1-based line-numbered method bodies for any methods involved in detected @Transactional proxy traps (default: true)"),
+                                        "focusMode", Map.of("type", "boolean", "description", "When true (default when expandMethods is provided), collapses untouched non-trapped methods into a compact 1-line summary index"),
                                         "sourceRoot", Map.of("type", "string", "description", "Optional override for Java source root directory")
                                 ),
                                 "required", List.of("query")
@@ -201,6 +204,33 @@ public class McpCompactorDispatcher {
                 .findFirst()
                 .orElse(report.files().get(0));
 
+        Set<String> explicitMethods = new LinkedHashSet<>();
+        Object rawExpandMethods = arguments.get("expandMethods");
+        if (rawExpandMethods == null) {
+            rawExpandMethods = arguments.get("methodNames");
+        }
+        if (rawExpandMethods instanceof String s && !s.isBlank()) {
+            for (String m : s.split(",")) {
+                String trimmed = m.trim();
+                if (!trimmed.isEmpty()) {
+                    explicitMethods.add(trimmed);
+                }
+            }
+        } else if (rawExpandMethods instanceof Collection<?> col) {
+            for (Object item : col) {
+                if (item != null) {
+                    for (String m : item.toString().split(",")) {
+                        String trimmed = m.trim();
+                        if (!trimmed.isEmpty()) {
+                            explicitMethods.add(trimmed);
+                        }
+                    }
+                }
+            }
+        }
+
+        boolean hasExplicitExpandMethods = !explicitMethods.isEmpty();
+
         boolean expandTrapped = extractBoolean(arguments, "expandTrappedMethods", properties.isAutoExpandTrappedMethodsInMcp());
         Set<String> methodsToExpand = new LinkedHashSet<>();
 
@@ -214,40 +244,24 @@ public class McpCompactorDispatcher {
                 }
             }
         }
+        methodsToExpand.addAll(explicitMethods);
 
-        Object rawExpandMethods = arguments.get("expandMethods");
-        if (rawExpandMethods == null) {
-            rawExpandMethods = arguments.get("methodNames");
-        }
-        if (rawExpandMethods instanceof String s && !s.isBlank()) {
-            for (String m : s.split(",")) {
-                String trimmed = m.trim();
-                if (!trimmed.isEmpty()) {
-                    methodsToExpand.add(trimmed);
-                }
-            }
-        } else if (rawExpandMethods instanceof Collection<?> col) {
-            for (Object item : col) {
-                if (item != null) {
-                    for (String m : item.toString().split(",")) {
-                        String trimmed = m.trim();
-                        if (!trimmed.isEmpty()) {
-                            methodsToExpand.add(trimmed);
-                        }
-                    }
-                }
-            }
-        }
-
-        String responseText = matchedFile.compactedSkeleton();
+        List<MethodBodySliceDto> autoSlices = List.of();
         if (!methodsToExpand.isEmpty()) {
-            List<MethodBodySliceDto> autoSlices = sliceExpander.expandMethodBodies(root, matchedFile.filePath(), methodsToExpand);
-            if (!autoSlices.isEmpty()) {
-                String formattedSlices = autoSlices.stream()
-                        .map(this::formatRawMethodSlice)
-                        .collect(Collectors.joining("\n\n"));
-                responseText = responseText.stripTrailing() + "\n\n// [AUTO-EXPANDED METHOD SLICES] (Exact raw source lines ready for edit_file Target)\n" + formattedSlices;
-            }
+            autoSlices = sliceExpander.expandMethodBodiesWithCallees(root, matchedFile.filePath(), methodsToExpand);
+        }
+
+        boolean focusMode = extractBoolean(arguments, "focusMode", hasExplicitExpandMethods);
+        String responseText = matchedFile.compactedSkeleton();
+        if (focusMode && !autoSlices.isEmpty()) {
+            responseText = renderFocusedSkeleton(matchedFile, autoSlices);
+        }
+
+        if (!autoSlices.isEmpty()) {
+            String formattedSlices = autoSlices.stream()
+                    .map(this::formatRawMethodSlice)
+                    .collect(Collectors.joining("\n\n"));
+            responseText = responseText.stripTrailing() + "\n\n// [AUTO-EXPANDED METHOD SLICES] (Exact raw source lines ready for edit_file Target)\n" + formattedSlices;
         }
 
         return McpJsonRpcResponse.success(requestId, Map.of(
@@ -255,6 +269,108 @@ public class McpCompactorDispatcher {
                 "structuredContent", matchedFile,
                 "isError", false
         ));
+    }
+
+    private String renderFocusedSkeleton(CompactedFileResultDto file, List<MethodBodySliceDto> expandedSlices) {
+        Set<String> expandedMethodNames = expandedSlices.stream()
+                .map(MethodBodySliceDto::methodName)
+                .collect(Collectors.toSet());
+
+        List<CompactedMethodSummaryDto> omittedMethods = new ArrayList<>();
+        for (CompactedMethodSummaryDto method : file.methods()) {
+            boolean isExpanded = expandedMethodNames.contains(method.methodName());
+            boolean hasTraps = method.trapNotes() != null && !method.trapNotes().isEmpty();
+            if (!isExpanded && !hasTraps) {
+                omittedMethods.add(method);
+            }
+        }
+
+        if (omittedMethods.isEmpty()) {
+            return file.compactedSkeleton();
+        }
+
+        String skeleton = file.compactedSkeleton();
+        for (CompactedMethodSummaryDto omitted : omittedMethods) {
+            String block = buildMethodCompactedBlock(omitted);
+            if (skeleton.contains("\n" + block)) {
+                skeleton = skeleton.replace("\n" + block, "");
+            } else if (skeleton.contains(block)) {
+                skeleton = skeleton.replace(block, "");
+            } else {
+                int sigIdx = skeleton.indexOf("    " + omitted.signature());
+                if (sigIdx >= 0) {
+                    int endIdx = skeleton.indexOf("\n", sigIdx);
+                    if (endIdx < 0) {
+                        endIdx = skeleton.length();
+                    } else {
+                        endIdx++;
+                    }
+                    int startIdx = sigIdx;
+                    for (int i = 0; i < omitted.retainedAnnotations().size(); i++) {
+                        int prevLineEnd = startIdx - 1;
+                        if (prevLineEnd >= 0 && skeleton.charAt(prevLineEnd) == '\n') {
+                            int prevLineStart = skeleton.lastIndexOf('\n', prevLineEnd - 1);
+                            prevLineStart = prevLineStart < 0 ? 0 : prevLineStart + 1;
+                            String prevLine = skeleton.substring(prevLineStart, prevLineEnd).trim();
+                            if (prevLine.startsWith("@")) {
+                                startIdx = prevLineStart;
+                            } else {
+                                break;
+                            }
+                        }
+                    }
+                    if (startIdx > 0 && skeleton.charAt(startIdx - 1) == '\n') {
+                        startIdx--;
+                    }
+                    skeleton = skeleton.substring(0, startIdx) + skeleton.substring(endIdx);
+                }
+            }
+        }
+
+        while (skeleton.contains("\n\n\n")) {
+            skeleton = skeleton.replace("\n\n\n", "\n\n");
+        }
+
+        String summaryEntries = omittedMethods.stream()
+                .map(m -> m.methodName() + "(L" + m.startLine() + "-L" + m.endLine() + ")")
+                .collect(Collectors.joining(", "));
+        String summaryLine = "    // Other Methods (" + omittedMethods.size() + " omitted): " + summaryEntries + "\n";
+
+        int lastBraceIndex = skeleton.lastIndexOf('}');
+        if (lastBraceIndex >= 0) {
+            String prefix = skeleton.substring(0, lastBraceIndex);
+            StringBuilder sb = new StringBuilder(prefix);
+            if (!prefix.endsWith("\n")) {
+                sb.append("\n");
+            }
+            if (!prefix.endsWith("\n\n")) {
+                sb.append("\n");
+            }
+            sb.append(summaryLine);
+            sb.append(skeleton.substring(lastBraceIndex));
+            skeleton = sb.toString();
+        } else {
+            skeleton = skeleton + "\n" + summaryLine;
+        }
+
+        return skeleton;
+    }
+
+    private String buildMethodCompactedBlock(CompactedMethodSummaryDto method) {
+        StringBuilder sb = new StringBuilder();
+        for (String ann : method.retainedAnnotations()) {
+            sb.append("    ").append(ann).append("\n");
+        }
+        sb.append("    ").append(method.signature());
+        if (method.omittedLineCount() == 0) {
+            sb.append(";\n");
+        } else if (properties.isIncludeLineNumbers()) {
+            sb.append(" /* L").append(method.startLine()).append("-L").append(method.endLine())
+                    .append(": body omitted (").append(method.omittedLineCount()).append(" lines) */ ;\n");
+        } else {
+            sb.append(" /* body omitted (").append(method.omittedLineCount()).append(" lines) */ ;\n");
+        }
+        return sb.toString();
     }
 
     private McpJsonRpcResponse callCompactSpringSlice(Object requestId, Map<String, Object> arguments) {
