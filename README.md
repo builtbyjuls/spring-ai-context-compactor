@@ -1,6 +1,6 @@
 # Spring AI Context Compactor & MCP Server
 
-A reusable **Spring Boot 4.1 starter, Spring AI 2.0 `CallAdvisor`, and Model Context Protocol (MCP) server** (`spring-context-compactor-starter`) that performs **Spring-semantic AST compaction** on Java source files, cutting LLM context token consumption by **58.8% across repositories** (**80.4% on JPA entities**, **70.8% in Spring AI prompts**) while preserving **100.0%** of Spring wiring, JPA mappings, `@Transactional` rules, and inline proxy-bypass warnings.
+A reusable **Spring Boot 4.1 starter, Spring AI 2.0 `CallAdvisor`, and Model Context Protocol (MCP) server** (`spring-context-compactor-starter`) that performs **Spring-semantic AST compaction** on Java source files - reducing pay-as-you-go coding agent API costs by **16.2% to 24.1%** and uncached input tokens by **29.2% to 45.6%** in verified multi-turn A/B benchmarks (`spring-petclinic-rest`) while preserving **100.0%** of Spring wiring, JPA mappings, `@Transactional` rules, and inline proxy-bypass warnings.
 
 * **Tech Stack**: **Java 21** (Virtual Threads), **Spring Boot 4.1.0**, **Spring AI 2.0.1**, **JavaParser 3.28.0**, **Spring AMQP (RabbitMQ 3.13)**, **PostgreSQL 16** (Testcontainers), **Hibernate ORM 7.x**.
 * **Scope**: Provides both a **Spring AI `CallAdvisor`** (`SpringContextCompactorAdvisor`) that automatically compresses Java code blocks in LLM prompts and deterministic **Model Context Protocol (MCP)** tools (`compact_spring_file`, `compact_spring_slice`, `read_spring_method_body`, `analyze_compaction_budget`) over stdio and HTTP for AI coding agents.
@@ -24,17 +24,53 @@ Enterprise **Spring Boot** source files waste thousands of context tokens when f
 
 ---
 
-## 2. Portfolio Evidence & Performance Gains Matrix
+## 2. Verified Benchmarks & Performance Gains
 
-Measured by `CompactorBenchmarkIntegrationTest` against the live 21-file institutional FX and derivatives clearing house application (`trade-clearing-compactor-demo/src/main/java`):
+### 2.1 Autonomous Coding Agent A/B Benchmark (`spring-petclinic-rest`)
 
-| Metric | Raw File / Naive Baseline | Spring Compactor Result | Measured Gain | Architectural Evidence |
-| --- | --- | --- | --- | --- |
-| **Repository Context Compaction (Full Source Scan vs AST Skeleton)** | 21 files / 1,462 lines / ~11,730 tokens | 21 skeletons / 417 lines / ~4,828 tokens | **-58.8% tokens (-6,902 tokens)** | Compacts all Spring stereotypes (`@RestController`, `@Service`, `@Repository`, `@Entity`, `@Configuration`) into compilable-style Java skeletons |
-| **Surgical Method Edit Workflow (Read Full Files vs Skeleton + Expand Method)** | 2 full files (~4,113 tokens) | 1 skeleton + 1 method (~1,639 tokens in 12.70 ms) | **-60.2% tokens (12.70 ms MCP latency)** | Agent inspects class skeleton with `Lstart-Lend` markers and unfolds only the target method body on demand |
-| **Spring Semantic Contract & Wiring Retention** | 106 / 106 Spring wiring & JPA/AMQP contracts | 106 / 106 contracts retained in skeletons | **100.0% contract retention** | Retains DI fields, `@Transactional` attributes, `@RabbitListener` queues, `@Query` JPQL strings, and `@Entity` `@Column` mappings |
-| **Pre-Prune `@Transactional` Proxy Trap Recall** | 3 / 4 internal call-site traps lost after naive body strip | 4 / 4 traps pinned inline with L-numbers | **100.0% trap recall (pre-prune AST scan)** | Scans AST before body stripping to pin `SELF_INVOCATION_BYPASS`, `READ_ONLY_CALLING_WRITE_REQUIRED`, and `NON_PUBLIC_TRANSACTIONAL` inline |
-| **Spring AI `CallAdvisor` Prompt Compression** | ~4,179 tokens / request (4,179,000 tokens / 1k calls) | ~1,220 tokens / request (1,220,000 tokens / 1k calls) | **-70.8% prompt tokens (-2,959,000 tokens / 1k calls)** | Zero-touch Spring AI 2.0 `CallAdvisor` compacts fenced Java blocks in `UserMessage` and `SystemMessage` before `ChatModel` call |
+Evaluated on canonical Spring Boot REST service changes in `spring-petclinic-rest` (`OwnerRestControllerV1#addVisitToOwner` bugfix, service validation, and integration tests) comparing standard file exploration against `spring-context-compactor` MCP tools across two frontier model families:
+
+| Metric | Claude Sonnet 3.5 Without MCP | Claude Sonnet 3.5 With MCP | Sonnet Delta | Gemini Pro Without MCP | Gemini Pro With MCP v3 | Gemini Delta |
+| :--- | :--- | :--- | :--- | :--- | :--- | :--- |
+| **Planner Turns** | 15 | **14** | **-6.7%** | 40 | **29** | **-27.5%** |
+| **Duration (Wall-Clock)** | 69.0s | **64.0s** | **-7.2%** | 378.0s | **375.0s** | **-0.8%** |
+| **Peak Context Window** | 49,048 tokens | **45,034 tokens** | **-8.2%** | 62,728 tokens | **62,774 tokens** | +0.1% |
+| **Net Context Added (`last - first`)** | +32,163 tokens | **+27,907 tokens** | **-13.2%** | +52,473 tokens | **+51,976 tokens** | **-0.9%** |
+| **Cumulative Context (`sum(in + cache)`)** | 557,436 tokens | **482,234 tokens** | **-13.5%** | 1,260,524 tokens | **1,017,014 tokens** | **-19.3%** |
+| **Uncached Input Tokens (`sum(in)`)** | 68,668 tokens | **48,626 tokens** | **-29.2%** | 256,474 tokens | **139,439 tokens** | **-45.6%** |
+| **Cached Input Tokens (`sum(cache)`)** | 488,768 tokens | **433,608 tokens** | **-11.3%** | 1,004,050 tokens | **877,575 tokens** | **-12.6%** |
+| **Output Tokens** | 5,861 tokens | **6,221 tokens** | +6.1% | 23,730 tokens | **23,466 tokens** | **-1.1%** |
+| **Raw Production File Reads** | 2 full `cat` dumps (16,580 chars) | **0 full reads (0 chars)** | **-100.0%** | 6 `read_file` calls (28,490 chars) | **0 full reads (0 chars)** | **-100.0%** |
+| **Tool Output Spills (`output.txt`)** | 0 spills | **0 spills** | 0 spills | 0 spills | **0 spills** | 0 spills |
+
+### 2.2 Pay-As-You-Go API Cost Impact
+
+Calculated using standard frontier model pay-as-you-go pricing (Claude Sonnet: $3.00/1M uncached input, $0.30/1M cached input, $15.00/1M output; Gemini Pro: $1.25/1M uncached input, $0.125/1M cached input, $10.00/1M output):
+
+| Cost Metric | Claude Sonnet 3.5 Without MCP | Claude Sonnet 3.5 With MCP | Sonnet Savings | Gemini Pro Without MCP | Gemini Pro With MCP v3 | Gemini Savings |
+| :--- | :--- | :--- | :--- | :--- | :--- | :--- |
+| **Measured Input Cost / Task** | $0.3526 | **$0.2760** | **-21.7%** | $0.4461 | **$0.2840** | **-36.3%** |
+| **Measured Total Bill / Task** | $0.4405 | **$0.3693** | **-16.2%** | $0.6834 | **$0.5187** | **-24.1%** |
+| **Cost per 1,000 Tasks (Measured)** | $440.53 | **$369.26** | **-$71.27** | $683.40 | **$518.66** | **-$164.74** |
+| **Cache-Normalized Input Cost / Task** | $0.2997 | **$0.2663** | **-11.1%** | $0.2281 | **$0.1977** | **-13.3%** |
+
+*Note: Cache-Normalized Input Cost assumes an ideal 100% prefix cache where every token in final context is billed once at full uncached price and all repeat turns are billed at cache-read price.*
+
+### 2.3 Spring AI `CallAdvisor` Single-Turn RAG Impact
+
+In applications where `SpringContextCompactorAdvisor` intercepts `ChatClient` prompts to compact embedded Java code blocks before single-turn LLM calls (e.g., PR review bots or code Q&A without multi-turn conversation caching):
+* **Prompt Size Reduction**: Reduces Java source token footprint by **56.8% to 63.1%** (`33,477` chars to `14,475` chars across Petclinic target files).
+* **Direct Input Cost Savings**: Drops single-turn Java input cost on Claude Sonnet from **$4.58 to $1.98 per 1,000 requests (-56.8%)**.
+
+### 2.4 Deterministic AST Invariants (`trade-clearing-compactor-demo`)
+
+Verified by `CompactorBenchmarkIntegrationTest` across 21 institutional clearing domain files:
+
+| Metric | Raw Baseline | Compacted Result | Verified Invariant |
+| :--- | :--- | :--- | :--- |
+| **Spring Contract Retention** | 106 / 106 contracts | 106 / 106 contracts retained | **100.0% retention** of DI fields, `@Transactional` attributes, `@RabbitListener` queues, `@Query` JPQL strings, and JPA mappings |
+| **Pre-Prune Proxy Trap Recall** | 3 / 4 traps lost after naive body strip | 4 / 4 traps pinned inline with line numbers | **100.0% trap recall** (`SELF_INVOCATION_BYPASS`, `READ_ONLY_CALLING_WRITE_REQUIRED`, `NON_PUBLIC_TRANSACTIONAL`) |
+| **Demo Source Line Reduction** | 21 files / 1,462 lines | 21 skeletons / 417 lines | **-71.5% lines** (estimated -58.8% tokens in static file compaction) |
 
 ### Per-Stereotype Compaction Breakdown
 

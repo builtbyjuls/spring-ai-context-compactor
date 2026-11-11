@@ -126,7 +126,8 @@ class SpringCompactorMcpIntegrationTest extends ClearingTestContainersBase {
                 "name", "compact_spring_file",
                 "arguments", Map.of(
                         "query", "TradeClearingService",
-                        "expandMethods", "novateAndClearTrade"
+                        "expandMethods", "novateAndClearTrade",
+                        "expandTrappedMethods", false
                 )
         ));
 
